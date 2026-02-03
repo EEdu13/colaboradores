@@ -644,7 +644,7 @@ app.post('/api/sync', async (req, res) => {
             -- MERGE: Sincroniza COLABORADORES com dados do Excel
             MERGE INTO COLABORADORES AS target
             USING ##EXCEL_DATA_${tableId} AS source
-            ON target.CPF = source.CPF
+            ON target.CPF = source.CPF COLLATE SQL_Latin1_General_CP1_CI_AI
             
             -- UPDATE: CPF existe em ambos
             WHEN MATCHED THEN
