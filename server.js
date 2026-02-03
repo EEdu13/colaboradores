@@ -950,6 +950,112 @@ app.get('/api/download-excel', async (req, res) => {
     }
 });
 
+// Rota para baixar Excel direto do SQL (após sincronização, com dados do trigger)
+app.get('/api/download-sql-excel', async (req, res) => {
+    let pool = null;
+
+    try {
+        console.log('📊 Gerando Excel dos dados do SQL...');
+
+        pool = await sql.connect(sqlConfig);
+        
+        // Buscar todos os dados do SQL (já com trigger aplicado)
+        const result = await pool.request().query(`
+            SELECT 
+                NOME, FUNCAO, CPF, MATRICULA, EMPRESA, CNPJ,
+                DATA_ADMISSAO, PROJETO, PROJETO_RH, SITUACAO, 
+                [SITUAÇÃO_TIPO] AS SITUACAO_TIPO, EQUIPE, COORDENADOR, 
+                SUPERVISOR, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE,
+                CLASSE, NOME_LIDER, ATUALIZADO_EM
+            FROM COLABORADORES
+            ORDER BY EMPRESA, NOME
+        `);
+
+        if (result.recordset.length === 0) {
+            return res.status(400).json({ success: false, error: 'Nenhum dado encontrado no SQL' });
+        }
+
+        console.log(`📋 ${result.recordset.length} registros encontrados no SQL`);
+
+        // Preparar dados para Excel
+        const excelData = result.recordset.map(row => ({
+            'NOME': row.NOME,
+            'FUNCAO': row.FUNCAO,
+            'CPF': row.CPF,
+            'MATRICULA': row.MATRICULA,
+            'EMPRESA': row.EMPRESA,
+            'CNPJ': row.CNPJ,
+            'DATA_ADMISSAO': row.DATA_ADMISSAO ? new Date(row.DATA_ADMISSAO).toLocaleDateString('pt-BR') : '',
+            'PROJETO': row.PROJETO,
+            'PROJETO_RH': row.PROJETO_RH,
+            'SITUACAO': row.SITUACAO,
+            'SITUACAO_TIPO': row.SITUACAO_TIPO,
+            'EQUIPE': row.EQUIPE,
+            'COORDENADOR': row.COORDENADOR,
+            'SUPERVISOR': row.SUPERVISOR,
+            'HORAS_TRABALHADAS': row.HORAS_TRABALHADAS,
+            'FUNCAO_EXECUTANTE': row.FUNCAO_EXECUTANTE,
+            'CLASSE': row.CLASSE,
+            'NOME_LIDER': row.NOME_LIDER
+        }));
+
+        // Criar workbook e worksheet
+        const wb = xlsx.utils.book_new();
+        const ws = xlsx.utils.json_to_sheet(excelData);
+
+        // Ajustar largura das colunas
+        ws['!cols'] = [
+            { wch: 35 }, // NOME
+            { wch: 30 }, // FUNCAO
+            { wch: 14 }, // CPF
+            { wch: 12 }, // MATRICULA
+            { wch: 35 }, // EMPRESA
+            { wch: 18 }, // CNPJ
+            { wch: 12 }, // DATA_ADMISSAO
+            { wch: 8 },  // PROJETO
+            { wch: 25 }, // PROJETO_RH
+            { wch: 10 }, // SITUACAO
+            { wch: 45 }, // SITUACAO_TIPO
+            { wch: 15 }, // EQUIPE
+            { wch: 25 }, // COORDENADOR
+            { wch: 25 }, // SUPERVISOR
+            { wch: 8 },  // HORAS
+            { wch: 20 }, // FUNCAO_EXECUTANTE
+            { wch: 8 },  // CLASSE
+            { wch: 25 }  // NOME_LIDER
+        ];
+
+        xlsx.utils.book_append_sheet(wb, ws, 'Colaboradores');
+
+        // Gerar buffer do arquivo
+        const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+        const nomeArquivo = `colaboradores_sql_${new Date().toISOString().split('T')[0]}.xlsx`;
+
+        res.setHeader('Content-Disposition', `attachment; filename=${nomeArquivo}`);
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.send(buffer);
+
+        console.log('✅ Excel do SQL gerado e enviado para download');
+
+    } catch (error) {
+        console.error('❌ Erro ao gerar Excel do SQL:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Erro ao gerar Excel do SQL',
+            details: error.message
+        });
+    } finally {
+        if (pool) {
+            try {
+                await pool.close();
+            } catch (e) {
+                console.error('Erro ao fechar pool:', e);
+            }
+        }
+    }
+});
+
 // Rota para gerar Excel comparativo
 app.post('/api/export-excel', (req, res) => {
     try {
