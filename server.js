@@ -24,24 +24,22 @@ app.use(express.static('public'));
 // EMAIL_ENABLED=false para desabilitar envio de email
 const EMAIL_ENABLED = process.env.EMAIL_ENABLED !== 'false';
 
-// Detectar se deve usar SSL (porta 465) ou STARTTLS (porta 587)
-const emailPort = parseInt(process.env.EMAIL_PORT) || 587;
-const useSSL = emailPort === 465;
-
+// Configuração SMTP - Microsoft 365
 const emailTransporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'mail.larsil.com.br',
-    port: emailPort,
-    secure: useSSL, // true para 465, false para 587
-    requireTLS: !useSSL, // STARTTLS para porta 587
-    connectionTimeout: 15000,
-    greetingTimeout: 15000,
-    socketTimeout: 20000,
+    host: process.env.EMAIL_HOST || 'smtp.office365.com',
+    port: parseInt(process.env.EMAIL_PORT) || 587,
+    secure: false, // Office 365 usa STARTTLS
+    requireTLS: true,
+    connectionTimeout: 30000,
+    greetingTimeout: 30000,
+    socketTimeout: 30000,
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
     },
     tls: {
-        rejectUnauthorized: false // Aceitar certificados auto-assinados (comum em HostGator)
+        ciphers: 'SSLv3',
+        rejectUnauthorized: false
     }
 });
 
@@ -844,7 +842,7 @@ app.get('/api/download-excel', async (req, res) => {
 
         // Enviar email em background - não bloqueia o download
         enviarEmailAsync({
-            from: 'noreply@larsil.com.br',
+            from: process.env.EMAIL_USER || 'noreply@alrflorestal.com.br',
             to: EMAIL_DESTINATARIOS,
             subject: `📊 Relatório de Colaboradores - ${dataHora}`,
             html: `
@@ -1009,7 +1007,7 @@ async function backupParaHistorico() {
         // Enviar email de confirmação
         try {
             await emailTransporter.sendMail({
-                from: 'noreply@larsil.com.br',
+                from: process.env.EMAIL_USER || 'noreply@alrflorestal.com.br',
                 to: EMAIL_DESTINATARIOS,
                 subject: `✅ Backup Diário Colaboradores - ${dataHoje}`,
                 html: `
