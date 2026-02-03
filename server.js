@@ -987,6 +987,7 @@ async function backupParaHistorico() {
         pool = await sql.connect(sqlConfig);
 
         // Copiar todos os registros de COLABORADORES para COLABORADORES_HISTORICO
+        // SITUACAO_TIPO é calculado com CASE porque não existe na tabela original
         const result = await pool.request().query(`
             INSERT INTO COLABORADORES_HISTORICO (
                 NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, PROJETO_RH,
@@ -996,7 +997,36 @@ async function backupParaHistorico() {
             )
             SELECT 
                 NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, PROJETO_RH,
-                SITUACAO, SITUACAO_TIPO, EQUIPE, COORDENADOR, SUPERVISOR,
+                SITUACAO,
+                CASE 
+                    WHEN SITUACAO = '1' THEN 'Trabalhando'
+                    WHEN SITUACAO = '2' THEN 'Férias'
+                    WHEN SITUACAO = '3' THEN 'Licença Remunerada'
+                    WHEN SITUACAO = '4' THEN 'Licença não Remunerada'
+                    WHEN SITUACAO = '5' THEN 'Lic. Maternidade/Paternidade'
+                    WHEN SITUACAO = '6' THEN 'Auxílio Doença / Acidente Trabalho'
+                    WHEN SITUACAO = '7' THEN 'Afastado'
+                    WHEN SITUACAO = '8' THEN 'Demitido'
+                    WHEN SITUACAO = '9' THEN 'Aviso Prévio'
+                    WHEN SITUACAO = '10' THEN 'Em Experiência'
+                    WHEN SITUACAO = '11' THEN 'Férias Vencidas'
+                    WHEN SITUACAO = '12' THEN 'Banco de Horas'
+                    WHEN SITUACAO = '13' THEN 'Licença Militar'
+                    WHEN SITUACAO = '14' THEN 'Aposentadoria por Invalidez'
+                    WHEN SITUACAO = '15' THEN 'Cedido para Outra Empresa'
+                    WHEN SITUACAO = '16' THEN 'Treinamento'
+                    WHEN SITUACAO = '17' THEN 'Aguardando Rescisão'
+                    WHEN SITUACAO = '18' THEN 'Transferido'
+                    WHEN SITUACAO = '19' THEN 'Contrato Suspenso'
+                    WHEN SITUACAO = '20' THEN 'Justa Causa'
+                    WHEN SITUACAO = '21' THEN 'Readaptação'
+                    WHEN SITUACAO = '22' THEN 'Meio Período'
+                    WHEN SITUACAO = '23' THEN 'Home Office'
+                    WHEN SITUACAO = '24' THEN 'Intermitente'
+                    WHEN SITUACAO = '25' THEN 'Estagiário'
+                    ELSE ''
+                END AS SITUACAO_TIPO,
+                EQUIPE, COORDENADOR, SUPERVISOR,
                 HORAS_TRABALHADAS, FUNCAO_EXECUTANTE, CLASSE, NOME_LIDER,
                 CNPJ, EMPRESA, MATRICULA, ATUALIZADO_EM, GETDATE()
             FROM COLABORADORES
@@ -1037,15 +1067,15 @@ async function backupParaHistorico() {
     }
 }
 
-// Agendar CRON: todos os dias às 23:50 (horário do servidor)
+// Agendar CRON: todos os dias às 00:30 (horário do servidor)
 // Formato: minuto hora dia mês dia-da-semana
-cron.schedule('50 23 * * *', () => {
+cron.schedule('30 0 * * *', () => {
     backupParaHistorico();
 }, {
     timezone: 'America/Sao_Paulo'
 });
 
-console.log('⏰ CRON agendado: Backup diário às 23:50 (Brasília)');
+console.log('⏰ CRON agendado: Backup diário às 00:30 (Brasília)');
 
 // Rota manual para executar o backup (para testes)
 app.post('/api/backup-historico', async (req, res) => {
