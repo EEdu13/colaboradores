@@ -649,29 +649,29 @@ app.post('/api/sync', async (req, res) => {
             -- UPDATE: CPF existe em ambos
             WHEN MATCHED THEN
                 UPDATE SET
-                    target.NOME = source.NOME,
-                    target.FUNCAO = source.FUNCAO,
+                    target.NOME = source.NOME COLLATE SQL_Latin1_General_CP1_CI_AI,
+                    target.FUNCAO = source.FUNCAO COLLATE SQL_Latin1_General_CP1_CI_AI,
                     target.DATA_ADMISSAO = source.DATA_ADMISSAO,
                     -- PROJETO: Manter do SQL se existir, senão usar da planilha
                     target.PROJETO = CASE 
                         WHEN ISNULL(target.PROJETO, '') <> '' THEN target.PROJETO 
-                        ELSE source.PROJETO_PLANILHA 
+                        ELSE source.PROJETO_PLANILHA COLLATE SQL_Latin1_General_CP1_CI_AI
                     END,
                     target.HORAS_TRABALHADAS = source.HORAS_TRABALHADAS,
                     -- FUNCAO_EXECUTANTE: Proteger MOTORISTA/OPERADOR do SQL
                     target.FUNCAO_EXECUTANTE = CASE 
                         WHEN target.FUNCAO_EXECUTANTE LIKE '%MOTORISTA%' OR target.FUNCAO_EXECUTANTE LIKE '%OPERADOR%'
                         THEN target.FUNCAO_EXECUTANTE
-                        ELSE source.FUNCAO_EXECUTANTE
+                        ELSE source.FUNCAO_EXECUTANTE COLLATE SQL_Latin1_General_CP1_CI_AI
                     END,
-                    target.CLASSE = source.CLASSE,
+                    target.CLASSE = source.CLASSE COLLATE SQL_Latin1_General_CP1_CI_AI,
                     target.ATUALIZADO_EM = source.ATUALIZADO_EM,
-                    target.CNPJ = source.CNPJ,
-                    target.EMPRESA = source.EMPRESA,
-                    target.MATRICULA = source.MATRICULA,
-                    target.PROJETO_RH = source.PROJETO_RH,
-                    target.SITUACAO = source.SITUACAO,
-                    target.[SITUAÇÃO_TIPO] = source.SITUACAO_TIPO
+                    target.CNPJ = source.CNPJ COLLATE SQL_Latin1_General_CP1_CI_AI,
+                    target.EMPRESA = source.EMPRESA COLLATE SQL_Latin1_General_CP1_CI_AI,
+                    target.MATRICULA = source.MATRICULA COLLATE SQL_Latin1_General_CP1_CI_AI,
+                    target.PROJETO_RH = source.PROJETO_RH COLLATE SQL_Latin1_General_CP1_CI_AI,
+                    target.SITUACAO = source.SITUACAO COLLATE SQL_Latin1_General_CP1_CI_AI,
+                    target.[SITUAÇÃO_TIPO] = source.SITUACAO_TIPO COLLATE SQL_Latin1_General_CP1_CI_AI
                     -- EQUIPE, COORDENADOR, SUPERVISOR, NOME_LIDER: Preservados (não tocamos)
             
             -- INSERT: CPF só existe no Excel (novo colaborador)
@@ -679,10 +679,21 @@ app.post('/api/sync', async (req, res) => {
                 INSERT (NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, HORAS_TRABALHADAS, 
                         FUNCAO_EXECUTANTE, CLASSE, ATUALIZADO_EM, CNPJ, EMPRESA, MATRICULA,
                         PROJETO_RH, SITUACAO, [SITUAÇÃO_TIPO])
-                VALUES (source.NOME, source.FUNCAO, source.CPF, source.DATA_ADMISSAO, 
-                        source.PROJETO_PLANILHA, source.HORAS_TRABALHADAS, source.FUNCAO_EXECUTANTE,
-                        source.CLASSE, source.ATUALIZADO_EM, source.CNPJ, source.EMPRESA, 
-                        source.MATRICULA, source.PROJETO_RH, source.SITUACAO, source.SITUACAO_TIPO)
+                VALUES (source.NOME COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.FUNCAO COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.CPF COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.DATA_ADMISSAO, 
+                        source.PROJETO_PLANILHA COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.HORAS_TRABALHADAS, 
+                        source.FUNCAO_EXECUTANTE COLLATE SQL_Latin1_General_CP1_CI_AI,
+                        source.CLASSE COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.ATUALIZADO_EM, 
+                        source.CNPJ COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.EMPRESA COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.MATRICULA COLLATE SQL_Latin1_General_CP1_CI_AI,
+                        source.PROJETO_RH COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.SITUACAO COLLATE SQL_Latin1_General_CP1_CI_AI, 
+                        source.SITUACAO_TIPO COLLATE SQL_Latin1_General_CP1_CI_AI)
             
             -- DELETE: CPF só existe no SQL (saiu da empresa)
             WHEN NOT MATCHED BY SOURCE THEN
