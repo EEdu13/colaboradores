@@ -41,15 +41,30 @@ function enviarEmailAsync(mailOptions) {
         return;
     }
     
+    // Converter attachments para formato Resend (base64)
+    let attachments = undefined;
+    if (mailOptions.attachments && mailOptions.attachments.length > 0) {
+        attachments = mailOptions.attachments.map(att => ({
+            filename: att.filename,
+            content: att.content.toString('base64')
+        }));
+    }
+    
     // Enviar sem await - não bloqueia a resposta
     resend.emails.send({
-        from: mailOptions.from || EMAIL_FROM,
+        from: EMAIL_FROM,
         to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
         subject: mailOptions.subject,
         html: mailOptions.html,
-        attachments: mailOptions.attachments
+        attachments: attachments
     })
-        .then(() => console.log(`📧 Email enviado para: ${mailOptions.to}`))
+        .then((result) => {
+            if (result.error) {
+                console.error('❌ Erro Resend:', result.error);
+            } else {
+                console.log(`📧 Email enviado para: ${mailOptions.to} (ID: ${result.data?.id})`);
+            }
+        })
         .catch(err => console.error('❌ Erro ao enviar email:', err.message));
 }
 
