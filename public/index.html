@@ -287,10 +287,10 @@
             }
         });
 
-        // Gerar Excel de Teste (mesclado com SQL)
+        // Gerar Excel de Teste (mesclado com SQL) - Agora usa GET com cache no servidor
         document.getElementById('previewMergeBtn').addEventListener('click', async () => {
             if (!currentData || !currentData.allValidRecords) {
-                alert('Nenhum dado para exportar');
+                alert('Nenhum dado para exportar. Faça upload primeiro.');
                 return;
             }
 
@@ -299,11 +299,8 @@
             btn.innerHTML = '<div class="spinner inline-block mr-2"></div> Gerando Excel...';
 
             try {
-                const response = await fetch('/api/preview-merge-excel', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ records: currentData.allValidRecords })
-                });
+                // Agora usa GET - dados já estão em cache no servidor após upload
+                const response = await fetch('/api/download-excel');
 
                 if (!response.ok) {
                     const errorData = await response.json();
@@ -315,7 +312,7 @@
                 const url = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'colaboradores_teste.xlsx';
+                a.download = `colaboradores_${new Date().toISOString().split('T')[0]}.xlsx`;
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);

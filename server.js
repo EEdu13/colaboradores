@@ -21,15 +21,34 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
 // Configuração do Email (credenciais em variáveis de ambiente)
+// EMAIL_ENABLED=false para desabilitar envio de email
+const EMAIL_ENABLED = process.env.EMAIL_ENABLED !== 'false';
+
 const emailTransporter = nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'mail.larsil.com.br',
     port: parseInt(process.env.EMAIL_PORT) || 465,
     secure: true,
+    connectionTimeout: 5000, // 5 segundos para conectar
+    greetingTimeout: 5000,
+    socketTimeout: 10000, // 10 segundos total
     auth: {
         user: process.env.EMAIL_USER || 'noreply@larsil.com.br',
         pass: process.env.EMAIL_PASS
     }
 });
+
+// Função para enviar email sem bloquear (fire and forget)
+function enviarEmailAsync(mailOptions) {
+    if (!EMAIL_ENABLED) {
+        console.log('📧 Email desabilitado (EMAIL_ENABLED=false)');
+        return;
+    }
+    
+    // Enviar sem await - não bloqueia a resposta
+    emailTransporter.sendMail(mailOptions)
+        .then(() => console.log(`📧 Email enviado para: ${mailOptions.to}`))
+        .catch(err => console.error('❌ Erro ao enviar email:', err.message));
+}
 
 // Lista de emails para receber o relatório (pode adicionar mais)
 const EMAIL_DESTINATARIOS = [
@@ -57,6 +76,11 @@ const upload = multer({
     },
     limits: { fileSize: 10 * 1024 * 1024 }
 });
+
+// Cache temporário dos dados processados (evita reenviar 2700 registros)
+let cachedUploadData = null;
+let cacheTimestamp = null;
+const CACHE_DURATION = 30 * 60 * 1000; // 30 minutos
 
 // Configuração Azure SQL (credenciais em variáveis de ambiente)
 const sqlConfig = {
@@ -473,6 +497,11 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
 
         console.log(`✅ ${dados.length} colaboradores processados`);
 
+        // Armazenar em cache para uso no Excel (evita reenviar 2700 registros)
+        cachedUploadData = dados;
+        cacheTimestamp = Date.now();
+        console.log(`💾 Dados em cache para geração de Excel`);
+
         res.json({
             success: true,
             preview,
@@ -673,18 +702,25 @@ app.post('/api/sync', async (req, res) => {
     }
 });
 
-// Rota para gerar Excel PREVIEW (com dados mesclados do SQL)
-app.post('/api/preview-merge-excel', async (req, res) => {
-    const { records } = req.body;
-
-    if (!records || !Array.isArray(records) || records.length === 0) {
-        return res.status(400).json({ success: false, error: 'Nenhum registro para exportar' });
+// Rota para gerar Excel PREVIEW (com dados mesclados do SQL) - Agora usa cache!
+app.get('/api/download-excel', async (req, res) => {
+    // Verificar se há dados em cache
+    if (!cachedUploadData || !cacheTimestamp) {
+        return res.status(400).json({ success: false, error: 'Faça upload do arquivo primeiro' });
     }
 
+    // Verificar se o cache expirou
+    if (Date.now() - cacheTimestamp > CACHE_DURATION) {
+        cachedUploadData = null;
+        cacheTimestamp = null;
+        return res.status(400).json({ success: false, error: 'Cache expirou. Faça upload novamente.' });
+    }
+
+    const records = cachedUploadData;
     let pool = null;
 
     try {
-        console.log(`📊 Gerando Excel Preview com dados do SQL...`);
+        console.log(`📊 Gerando Excel com ${records.length} registros do cache...`);
 
         pool = await sql.connect(sqlConfig);
         
@@ -789,37 +825,32 @@ app.post('/api/preview-merge-excel', async (req, res) => {
         // Gerar buffer do arquivo
         const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-        // Enviar email com o Excel anexado
+        // Enviar email com o Excel anexado (não-bloqueante)
         const dataHora = new Date().toLocaleString('pt-BR');
         const nomeArquivo = `colaboradores_${new Date().toISOString().split('T')[0]}.xlsx`;
 
-        try {
-            await emailTransporter.sendMail({
-                from: 'noreply@larsil.com.br',
-                to: EMAIL_DESTINATARIOS,
-                subject: `📊 Relatório de Colaboradores - ${dataHora}`,
-                html: `
-                    <h2>Relatório de Colaboradores</h2>
-                    <p>Segue em anexo o relatório de colaboradores gerado em <strong>${dataHora}</strong>.</p>
-                    <p><strong>Total de registros:</strong> ${mergedData.length}</p>
-                    <hr>
-                    <p style="color: #666; font-size: 12px;">Email enviado automaticamente pelo Sistema de Sincronização RH.</p>
-                `,
-                attachments: [
-                    {
-                        filename: nomeArquivo,
-                        content: buffer,
-                        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                    }
-                ]
-            });
-            console.log(`📧 Email enviado para: ${EMAIL_DESTINATARIOS.join(', ')}`);
-        } catch (emailError) {
-            console.error('❌ Erro ao enviar email:', emailError.message);
-            // Continua mesmo se o email falhar
-        }
+        // Enviar email em background - não bloqueia o download
+        enviarEmailAsync({
+            from: 'noreply@larsil.com.br',
+            to: EMAIL_DESTINATARIOS,
+            subject: `📊 Relatório de Colaboradores - ${dataHora}`,
+            html: `
+                <h2>Relatório de Colaboradores</h2>
+                <p>Segue em anexo o relatório de colaboradores gerado em <strong>${dataHora}</strong>.</p>
+                <p><strong>Total de registros:</strong> ${mergedData.length}</p>
+                <hr>
+                <p style="color: #666; font-size: 12px;">Email enviado automaticamente pelo Sistema de Sincronização RH.</p>
+            `,
+            attachments: [
+                {
+                    filename: nomeArquivo,
+                    content: buffer,
+                    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+                }
+            ]
+        });
 
-        // Enviar arquivo para download
+        // Enviar arquivo para download IMEDIATAMENTE
         res.setHeader('Content-Disposition', `attachment; filename=${nomeArquivo}`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.send(buffer);
