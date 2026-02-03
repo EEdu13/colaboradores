@@ -24,8 +24,9 @@ app.use(express.static('public'));
 // EMAIL_ENABLED=false para desabilitar envio de email
 const EMAIL_ENABLED = process.env.EMAIL_ENABLED !== 'false';
 
-// Configuração Resend API
-const resend = new Resend(process.env.RESEND_API_KEY);
+// Configuração Resend API - só inicializa se tiver a key
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const resend = RESEND_API_KEY ? new Resend(RESEND_API_KEY) : null;
 const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@larsil.com.br';
 
 // Função para enviar email sem bloquear (fire and forget)
@@ -35,7 +36,7 @@ function enviarEmailAsync(mailOptions) {
         return;
     }
     
-    if (!process.env.RESEND_API_KEY) {
+    if (!resend) {
         console.log('📧 Email não configurado (RESEND_API_KEY não definido)');
         return;
     }
