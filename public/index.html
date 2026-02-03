@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Upload Colaboradores RH</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.2/css/all.min.css">
+    <style>
+        .drag-over { border-color: #3b82f6 !important; background-color: #eff6ff !important; }
+        .fade-in { animation: fadeIn 0.3s ease-in-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <header class="bg-white shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 py-4">
+            <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-3">
+                    <div class="bg-blue-600 p-2 rounded-lg">
+                        <i class="fas fa-users text-white text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-800">Upload Colaboradores RH</h1>
+                        <p class="text-sm text-gray-500">Sincronização com Azure SQL</p>
+                    </div>
+                </div>
+                <div id="healthStatus" class="flex items-center space-x-2 text-sm">
+                    <span class="w-2 h-2 bg-gray-400 rounded-full"></span>
+                    <span class="text-gray-500">Verificando...</span>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="max-w-7xl mx-auto px-4 py-8">
+        <section id="uploadSection" class="mb-8">
+            <div class="bg-white rounded-xl shadow-sm p-6">
+                <h2 class="text-lg font-semibold text-gray-800 mb-4">
+                    <i class="fas fa-cloud-upload-alt text-blue-600 mr-2"></i>
+                    Enviar Planilha de Colaboradores
+                </h2>
+                
+                <div id="dropZone" class="border-2 border-dashed border-gray-300 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50">
+                    <input type="file" id="fileInput" accept=".xlsx" class="hidden">
+                    <div id="uploadContent">
+                        <i class="fas fa-file-excel text-5xl text-gray-400 mb-4"></i>
+                        <p class="text-gray-600 mb-2">Arraste o arquivo ou clique para selecionar</p>
+                        <button id="selectFileBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">
+                            <i class="fas fa-folder-open mr-2"></i>Selecionar Planilha
+                        </button>
+                        <p class="text-xs text-gray-400 mt-4">Apenas .xlsx • Máximo 10MB</p>
+                    </div>
+                    <div id="uploadLoading" class="hidden">
+                        <div class="spinner mx-auto mb-4"></div>
+                        <p class="text-blue-600 font-medium">Processando...</p>
+                    </div>
+                </div>
+                
+                <div id="fileInfo" class="hidden mt-4 p-4 bg-gray-50 rounded-lg">
+                    <div class="flex items-center justify-between">
+                        <div class="flex items-center space-x-3">
+                            <i class="fas fa-file-excel text-green-600 text-2xl"></i>
+                            <div>
+                                <p id="fileName" class="font-medium text-gray-800"></p>
+                                <p id="fileSize" class="text-sm text-gray-500"></p>
+                            </div>
+                        </div>
+                        <button id="removeFileBtn" class="text-red-500 hover:text-red-700">
+                            <i class="fas fa-times-circle text-xl"></i>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <section id="resultsSection" class="hidden fade-in">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                <div class="bg-white rounded-xl shadow-sm p-5">
+                    <p class="text-sm text-gray-500">Total</p>
+                    <p id="statTotal" class="text-2xl font-bold text-gray-800">0</p>
+                </div>
+                <div class="bg-white rounded-xl shadow-sm p-5">
+                    <p class="text-sm text-gray-500">Válidos</p>
+                    <p id="statValid" class="text-2xl font-bold text-green-600">0</p>
+                </div>
+                <div class="bg-white rounded-xl shadow-sm p-5">
+                    <p class="text-sm text-gray-500">Empresas</p>
+                    <p id="statEmpresas" class="text-2xl font-bold text-purple-600">0</p>
+                </div>
+            </div>
+
+            <div class="bg-white rounded-xl shadow-sm p-6 mb-6">
+                <h3 class="text-lg font-semibold mb-4">Preview (10 primeiros)</h3>
+                <div class="overflow-x-auto">
+                    <table class="min-w-full text-sm">
+                        <thead class="bg-gray-50">
+                            <tr>
+                                <th class="px-3 py-2 text-left">Nome</th>
+                                <th class="px-3 py-2 text-left">CPF</th>
+                                <th class="px-3 py-2 text-left">Matrícula</th>
+                                <th class="px-3 py-2 text-left">Empresa</th>
+                                <th class="px-3 py-2 text-left">Função</th>
+                                <th class="px-3 py-2 text-left">Classe</th>
+                                <th class="px-3 py-2 text-left">Func. Exec.</th>
+                                <th class="px-3 py-2 text-left">Projeto RH</th>
+                                <th class="px-3 py-2 text-left">Situação</th>
+                                <th class="px-3 py-2 text-left">Tipo Situação</th>
+                            </tr>
+                        </thead>
+                        <tbody id="previewTableBody" class="divide-y"></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="flex justify-center space-x-4">
+                <button id="previewMergeBtn" class="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 rounded-lg font-medium">
+                    <i class="fas fa-file-excel mr-2"></i>Gerar Excel de Teste
+                </button>
+                <button id="syncBtn" class="bg-green-600 hover:bg-green-700 text-white px-8 py-3 rounded-lg font-medium">
+                    <i class="fas fa-database mr-2"></i>Enviar para SQL
+                </button>
+            </div>
+        </section>
+
+        <section id="syncResultSection" class="hidden fade-in">
+            <div id="syncResultCard" class="bg-white rounded-xl shadow-sm p-8 text-center"></div>
+        </section>
+    </main>
+
+    <script>
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const selectFileBtn = document.getElementById('selectFileBtn');
+        const uploadContent = document.getElementById('uploadContent');
+        const uploadLoading = document.getElementById('uploadLoading');
+        const fileInfo = document.getElementById('fileInfo');
+        const resultsSection = document.getElementById('resultsSection');
+        const syncBtn = document.getElementById('syncBtn');
+        const syncResultSection = document.getElementById('syncResultSection');
+        let currentData = null;
+
+        function formatCPF(cpf) {
+            if (!cpf || cpf.length !== 11) return cpf;
+            return cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+        }
+
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('drag-over');
+        });
+
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('drag-over');
+        });
+
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('drag-over');
+            if (e.dataTransfer.files.length > 0) handleFile(e.dataTransfer.files[0]);
+        });
+
+        selectFileBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            fileInput.click();
+        });
+
+        dropZone.addEventListener('click', () => fileInput.click());
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) handleFile(e.target.files[0]);
+        });
+
+        document.getElementById('removeFileBtn').addEventListener('click', () => {
+            fileInput.value = '';
+            fileInfo.classList.add('hidden');
+            resultsSection.classList.add('hidden');
+        });
+
+        async function handleFile(file) {
+            if (!file.name.toLowerCase().endsWith('.xlsx')) {
+                alert('Apenas arquivos .xlsx são permitidos.\n\nSe o arquivo for .xls, abra no Excel e salve como "Pasta de Trabalho do Excel (.xlsx)"');
+                return;
+            }
+
+            document.getElementById('fileName').textContent = file.name;
+            document.getElementById('fileSize').textContent = (file.size / 1024).toFixed(2) + ' KB';
+            fileInfo.classList.remove('hidden');
+
+            uploadContent.classList.add('hidden');
+            uploadLoading.classList.remove('hidden');
+
+            const formData = new FormData();
+            formData.append('file', file);
+
+            try {
+                const response = await fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Erro ao processar arquivo');
+                }
+
+                currentData = data;
+                displayResults(data);
+
+            } catch (error) {
+                alert(error.message);
+                fileInput.value = '';
+                fileInfo.classList.add('hidden');
+            } finally {
+                uploadContent.classList.remove('hidden');
+                uploadLoading.classList.add('hidden');
+            }
+        }
+
+        function displayResults(data) {
+            document.getElementById('statTotal').textContent = data.stats.total;
+            document.getElementById('statValid').textContent = data.stats.valid;
+            document.getElementById('statEmpresas').textContent = data.stats.empresas ? data.stats.empresas.length : 0;
+
+            const tbody = document.getElementById('previewTableBody');
+            tbody.innerHTML = '';
+            
+            data.preview.forEach(record => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td class="px-3 py-2 text-xs">${record.NOME || ''}</td>
+                    <td class="px-3 py-2 font-mono text-xs">${formatCPF(record.CPF)}</td>
+                    <td class="px-3 py-2 text-xs">${record.MATRICULA || ''}</td>
+                    <td class="px-3 py-2 text-xs">${record.EMPRESA || ''}</td>
+                    <td class="px-3 py-2 text-xs">${record.FUNCAO || ''}</td>
+                    <td class="px-3 py-2"><span class="px-2 py-1 bg-purple-100 text-purple-800 rounded text-xs">${record.CLASSE || ''}</span></td>
+                    <td class="px-3 py-2"><span class="px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">${record.FUNCAO_EXECUTANTE || ''}</span></td>
+                    <td class="px-3 py-2 text-xs">${record.PROJETO_RH || ''}</td>
+                    <td class="px-3 py-2 text-xs">${record.SITUACAO || ''}</td>
+                    <td class="px-3 py-2 text-xs">${record.SITUACAO_TIPO || ''}</td>
+                `;
+                tbody.appendChild(row);
+            });
+
+            resultsSection.classList.remove('hidden');
+        }
+
+        syncBtn.addEventListener('click', async () => {
+            if (!currentData) return;
+
+            syncBtn.disabled = true;
+            syncBtn.innerHTML = '<div class="spinner inline-block mr-2"></div> Sincronizando...';
+
+            try {
+                const response = await fetch('/api/sync', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ records: currentData.allValidRecords })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok || !data.success) {
+                    throw new Error(data.error || 'Erro ao sincronizar');
+                }
+
+                document.getElementById('syncResultCard').innerHTML = `
+                    <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <i class="fas fa-check-circle text-green-600 text-4xl"></i>
+                    </div>
+                    <h3 class="text-2xl font-bold text-green-600 mb-2">✅ Sincronização Concluída!</h3>
+                    <p class="text-gray-600 mb-6">${data.results.inserted} colaboradores inseridos</p>
+                    <button onclick="location.reload()" class="bg-blue-600 text-white px-6 py-2 rounded-lg">
+                        Nova Importação
+                    </button>
+                `;
+                syncResultSection.classList.remove('hidden');
+
+            } catch (error) {
+                alert('Erro: ' + error.message);
+            } finally {
+                syncBtn.disabled = false;
+                syncBtn.innerHTML = '<i class="fas fa-database mr-2"></i>Enviar para SQL';
+            }
+        });
+
+        // Gerar Excel de Teste (mesclado com SQL)
+        document.getElementById('previewMergeBtn').addEventListener('click', async () => {
+            if (!currentData || !currentData.allValidRecords) {
+                alert('Nenhum dado para exportar');
+                return;
+            }
+
+            const btn = document.getElementById('previewMergeBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spinner inline-block mr-2"></div> Gerando Excel...';
+
+            try {
+                const response = await fetch('/api/preview-merge-excel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ records: currentData.allValidRecords })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.error || 'Erro ao gerar Excel');
+                }
+
+                // Baixar o arquivo
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'colaboradores_teste.xlsx';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+
+            } catch (error) {
+                alert('Erro: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-file-excel mr-2"></i>Gerar Excel de Teste';
+            }
+        });
+
+        // Health check
+        async function checkHealth() {
+            try {
+                const response = await fetch('/api/health');
+                const data = await response.json();
+                const statusDot = document.querySelector('#healthStatus span:first-child');
+                const statusText = document.querySelector('#healthStatus span:last-child');
+                
+                if (data.sql === 'connected') {
+                    statusDot.className = 'w-2 h-2 bg-green-500 rounded-full';
+                    statusText.textContent = 'SQL Conectado';
+                    statusText.className = 'text-green-600';
+                } else {
+                    statusDot.className = 'w-2 h-2 bg-red-500 rounded-full';
+                    statusText.textContent = 'SQL Desconectado';
+                    statusText.className = 'text-red-600';
+                }
+            } catch (error) {
+                console.error('Health check falhou:', error);
+            }
+        }
+
+        checkHealth();
+        setInterval(checkHealth, 30000);
+    </script>
+</body>
+</html>

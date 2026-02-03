@@ -1,0 +1,28 @@
+# =============================================================================
+# GITIGNORE - Sistema RH Upload
+# =============================================================================
+
+# Dependências
+node_modules/
+
+# Variáveis de ambiente (CONTÉM SENHAS!)
+.env
+
+# Arquivos de upload temporários
+uploads/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Sistema operacional
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Build
+dist/
+build/
