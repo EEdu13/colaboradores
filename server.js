@@ -708,6 +708,77 @@ app.post('/api/sync', async (req, res) => {
             console.log(`   📌 ${funcaoProtegida} com FUNCAO_EXECUTANTE protegida (MOTORISTA/OPERADOR)`);
             console.log(`   📌 ${camposPreservados} com campos manuais preservados`);
 
+            // APÓS COMMIT: Buscar dados do SQL (já com trigger aplicado) e enviar email
+            try {
+                console.log('📧 Gerando Excel do SQL para envio por email...');
+                
+                // Buscar dados atualizados do SQL (trigger já preencheu NOME_LIDER e COORDENADOR)
+                const sqlData = await pool.request().query(`
+                    SELECT 
+                        NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, PROJETO_RH,
+                        SITUACAO, [SITUAÇÃO_TIPO] AS SITUACAO_TIPO, EQUIPE, 
+                        COORDENADOR, SUPERVISOR, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE,
+                        CLASSE, NOME_LIDER, CNPJ, EMPRESA, MATRICULA, ATUALIZADO_EM
+                    FROM COLABORADORES
+                    ORDER BY EMPRESA, NOME
+                `);
+                
+                if (sqlData.recordset.length > 0) {
+                    // Gerar Excel com dados do SQL
+                    const wb = xlsx.utils.book_new();
+                    const wsData = sqlData.recordset.map(row => ({
+                        'NOME': row.NOME,
+                        'FUNCAO': row.FUNCAO,
+                        'CPF': row.CPF,
+                        'DATA_ADMISSAO': row.DATA_ADMISSAO ? new Date(row.DATA_ADMISSAO).toLocaleDateString('pt-BR') : '',
+                        'PROJETO': row.PROJETO,
+                        'PROJETO_RH': row.PROJETO_RH,
+                        'SITUACAO': row.SITUACAO,
+                        'SITUACAO_TIPO': row.SITUACAO_TIPO,
+                        'EQUIPE': row.EQUIPE,
+                        'COORDENADOR': row.COORDENADOR,
+                        'SUPERVISOR': row.SUPERVISOR,
+                        'HORAS_TRABALHADAS': row.HORAS_TRABALHADAS,
+                        'FUNCAO_EXECUTANTE': row.FUNCAO_EXECUTANTE,
+                        'CLASSE': row.CLASSE,
+                        'NOME_LIDER': row.NOME_LIDER,
+                        'CNPJ': row.CNPJ,
+                        'EMPRESA': row.EMPRESA,
+                        'MATRICULA': row.MATRICULA
+                    }));
+                    
+                    const ws = xlsx.utils.json_to_sheet(wsData);
+                    xlsx.utils.book_append_sheet(wb, ws, 'Colaboradores');
+                    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+                    
+                    const dataHora = new Date().toLocaleString('pt-BR');
+                    const nomeArquivo = `colaboradores_${new Date().toISOString().split('T')[0]}.xlsx`;
+                    
+                    // Enviar email com Excel atualizado
+                    enviarEmailAsync({
+                        to: EMAIL_DESTINATARIOS,
+                        subject: `📊 Relatório de Colaboradores - ${dataHora}`,
+                        html: `
+                            <h2>Relatório de Colaboradores</h2>
+                            <p>Segue em anexo o relatório de colaboradores sincronizado em <strong>${dataHora}</strong>.</p>
+                            <p><strong>Total de registros:</strong> ${sqlData.recordset.length}</p>
+                            <p><em>Dados extraídos do SQL Server após sincronização (com COORDENADOR e NOME_LIDER preenchidos).</em></p>
+                            <hr>
+                            <p style="color: #666; font-size: 12px;">Email enviado automaticamente pelo Sistema de Sincronização RH.</p>
+                        `,
+                        attachments: [
+                            {
+                                filename: nomeArquivo,
+                                content: buffer
+                            }
+                        ]
+                    });
+                    console.log(`📧 Email com Excel do SQL será enviado para: ${EMAIL_DESTINATARIOS.join(', ')}`);
+                }
+            } catch (emailError) {
+                console.error('❌ Erro ao gerar/enviar email pós-sync:', emailError.message);
+            }
+
             res.json({
                 success: true,
                 message: 'Sincronização concluída com sucesso',
@@ -868,37 +939,15 @@ app.get('/api/download-excel', async (req, res) => {
         // Gerar buffer do arquivo
         const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
 
-        // Enviar email com o Excel anexado (não-bloqueante)
-        const dataHora = new Date().toLocaleString('pt-BR');
         const nomeArquivo = `colaboradores_${new Date().toISOString().split('T')[0]}.xlsx`;
 
-        // Enviar email em background - não bloqueia o download
-        enviarEmailAsync({
-            from: process.env.EMAIL_USER || 'noreply@alrflorestal.com.br',
-            to: EMAIL_DESTINATARIOS,
-            subject: `📊 Relatório de Colaboradores - ${dataHora}`,
-            html: `
-                <h2>Relatório de Colaboradores</h2>
-                <p>Segue em anexo o relatório de colaboradores gerado em <strong>${dataHora}</strong>.</p>
-                <p><strong>Total de registros:</strong> ${mergedData.length}</p>
-                <hr>
-                <p style="color: #666; font-size: 12px;">Email enviado automaticamente pelo Sistema de Sincronização RH.</p>
-            `,
-            attachments: [
-                {
-                    filename: nomeArquivo,
-                    content: buffer,
-                    contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-                }
-            ]
-        });
-
         // Enviar arquivo para download IMEDIATAMENTE
+        // NOTA: Email agora é enviado APÓS o sync (com dados do SQL e trigger aplicado)
         res.setHeader('Content-Disposition', `attachment; filename=${nomeArquivo}`);
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
         res.send(buffer);
 
-        console.log('✅ Excel Preview gerado com sucesso');
+        console.log('✅ Excel Preview gerado com sucesso (email será enviado após sync)');
 
     } catch (error) {
         console.error('❌ Erro ao gerar Excel Preview:', error);
