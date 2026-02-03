@@ -549,8 +549,20 @@ app.post('/api/sync', async (req, res) => {
     const { records } = req.body;
 
     if (!records || !Array.isArray(records) || records.length === 0) {
-        return res.status(400).json({ success: false, error: 'Nenhum registro para sincronizar' });
+        console.log('❌ SYNC: Nenhum registro recebido - ABORTANDO para proteger dados');
+        return res.status(400).json({ success: false, error: 'Nenhum registro para sincronizar. Operação cancelada para proteger os dados existentes.' });
     }
+
+    // Proteção extra: não sincronizar se tiver menos de 100 registros (provavelmente erro)
+    if (records.length < 100) {
+        console.log(`⚠️ SYNC: Apenas ${records.length} registros - quantidade suspeita, ABORTANDO`);
+        return res.status(400).json({ 
+            success: false, 
+            error: `Apenas ${records.length} registros recebidos. Isso parece um erro. Mínimo esperado: 100. Operação cancelada.` 
+        });
+    }
+
+    console.log(`📊 SYNC: Recebidos ${records.length} registros para sincronizar`);
 
     let pool = null;
 
@@ -649,16 +661,16 @@ app.post('/api/sync', async (req, res) => {
                     request.input('cnpj', sql.VarChar(18), record.CNPJ);
                     request.input('empresa', sql.NVarChar(255), record.EMPRESA);
                     request.input('matricula', sql.VarChar(20), record.MATRICULA);
-                    request.input('projetoRH', sql.NVarChar(100), record.PROJETO_RH || '');
-                    request.input('situacao', sql.NVarChar(50), record.SITUACAO || '');
-                    request.input('situacaoTipo', sql.NVarChar(100), record.SITUACAO_TIPO || '');
+                    request.input('projetoRH', sql.VarChar(50), record.PROJETO_RH || '');
+                    request.input('situacao', sql.VarChar(20), String(record.SITUACAO || ''));
+                    request.input('situacaoTipo', sql.VarChar(255), record.SITUACAO_TIPO || '');
 
                     await request.query(`
                         INSERT INTO COLABORADORES (
                             NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, EQUIPE,
                             COORDENADOR, SUPERVISOR, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE,
                             CLASSE, ATUALIZADO_EM, NOME_LIDER, CNPJ, EMPRESA, MATRICULA,
-                            PROJETO_RH, SITUACAO, SITUACAO_TIPO
+                            PROJETO_RH, SITUACAO, [SITUAÇÃO_TIPO]
                         ) VALUES (
                             @nome, @funcao, @cpf, @dataAdmissao, @projeto, @equipe,
                             @coordenador, @supervisor, @horas, @funcExec,
@@ -675,10 +687,22 @@ app.post('/api/sync', async (req, res) => {
                         nome: record.NOME,
                         error: recordError.message
                     });
+                    console.error(`❌ Erro ao inserir ${record.CPF}: ${recordError.message}`);
                 }
             }
 
-            // COMMIT
+            // Proteção: se nenhum registro foi inserido, fazer ROLLBACK
+            if (inseridos === 0) {
+                await transaction.rollback();
+                console.error('❌ ROLLBACK: Nenhum registro inserido! Dados originais preservados.');
+                return res.status(500).json({
+                    success: false,
+                    error: 'Nenhum registro foi inserido. Operação cancelada para proteger os dados.',
+                    details: errors.length > 0 ? errors[0].error : 'Erro desconhecido'
+                });
+            }
+
+            // COMMIT apenas se teve inserções bem-sucedidas
             await transaction.commit();
             console.log(`✅ ${inseridos} colaboradores inseridos`);
             console.log(`   📌 ${funcaoProtegida} com FUNCAO_EXECUTANTE protegida (MOTORISTA/OPERADOR)`);
@@ -699,6 +723,7 @@ app.post('/api/sync', async (req, res) => {
 
         } catch (error) {
             await transaction.rollback();
+            console.error('❌ ROLLBACK devido a erro:', error.message);
             throw error;
         }
 
