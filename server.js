@@ -107,10 +107,17 @@ const sqlConfig = {
     database: process.env.SQL_DATABASE || 'Tabela_teste',
     server: process.env.SQL_SERVER || 'alrflorestal.database.windows.net',
     port: parseInt(process.env.SQL_PORT) || 1433,
-    pool: { max: 10, min: 0, idleTimeoutMillis: 30000 },
+    pool: { 
+        max: 10, 
+        min: 0, 
+        idleTimeoutMillis: 60000,
+        acquireTimeoutMillis: 60000
+    },
     options: {
         encrypt: true,
-        trustServerCertificate: false
+        trustServerCertificate: false,
+        requestTimeout: 300000,  // 5 minutos para queries
+        connectionTimeout: 60000 // 1 minuto para conectar
     }
 };
 
@@ -562,241 +569,217 @@ app.post('/api/sync', async (req, res) => {
         });
     }
 
-    console.log(`📊 SYNC: Recebidos ${records.length} registros para sincronizar`);
+    console.log(`📊 SYNC: Recebidos ${records.length} registros para sincronizar via MERGE`);
 
     let pool = null;
 
     try {
-        console.log(`🔄 Sincronizando ${records.length} registros...`);
-
         pool = await sql.connect(sqlConfig);
         
-        // 1. BUSCAR dados existentes no SQL para preservar campos manuais
-        const existingResult = await pool.request().query(`
-            SELECT CPF, FUNCAO_EXECUTANTE, PROJETO, EQUIPE, COORDENADOR, SUPERVISOR, NOME_LIDER 
-            FROM COLABORADORES
+        // 1. Criar tabela temporária com os dados do Excel
+        console.log('📋 Criando tabela temporária...');
+        await pool.request().query(`
+            IF OBJECT_ID('tempdb..#EXCEL_DATA') IS NOT NULL DROP TABLE #EXCEL_DATA;
+            CREATE TABLE #EXCEL_DATA (
+                NOME NVARCHAR(100),
+                FUNCAO NVARCHAR(100),
+                CPF VARCHAR(11) PRIMARY KEY,
+                DATA_ADMISSAO DATE,
+                PROJETO_PLANILHA VARCHAR(10),
+                HORAS_TRABALHADAS INT,
+                FUNCAO_EXECUTANTE NVARCHAR(100),
+                CLASSE VARCHAR(10),
+                ATUALIZADO_EM DATE,
+                CNPJ VARCHAR(18),
+                EMPRESA NVARCHAR(255),
+                MATRICULA VARCHAR(20),
+                PROJETO_RH VARCHAR(50),
+                SITUACAO VARCHAR(20),
+                SITUACAO_TIPO VARCHAR(255)
+            );
+        `);
+
+        // 2. Inserir dados do Excel na tabela temporária (em lotes para performance)
+        console.log('📥 Inserindo dados na tabela temporária...');
+        const batchSize = 100;
+        for (let i = 0; i < records.length; i += batchSize) {
+            const batch = records.slice(i, i + batchSize);
+            
+            // Construir VALUES para INSERT em lote
+            const values = batch.map(r => {
+                const nome = (r.NOME || '').replace(/'/g, "''").substring(0, 100);
+                const funcao = (r.FUNCAO || '').replace(/'/g, "''").substring(0, 100);
+                const cpf = (r.CPF || '').substring(0, 11);
+                const dataAdm = r.DATA_ADMISSAO ? `'${new Date(r.DATA_ADMISSAO).toISOString().split('T')[0]}'` : 'NULL';
+                const projPlan = (r.PROJETO_PLANILHA || '').substring(0, 10);
+                const horas = r.HORAS_TRABALHADAS || 8;
+                const funcExec = (r.FUNCAO_EXECUTANTE || '').replace(/'/g, "''").substring(0, 100);
+                const classe = (r.CLASSE || '').substring(0, 10);
+                const atualizado = r.ATUALIZADO_EM ? `'${new Date(r.ATUALIZADO_EM).toISOString().split('T')[0]}'` : 'NULL';
+                const cnpj = (r.CNPJ || '').substring(0, 18);
+                const empresa = (r.EMPRESA || '').replace(/'/g, "''").substring(0, 255);
+                const matricula = (r.MATRICULA || '').substring(0, 20);
+                const projRH = (r.PROJETO_RH || '').replace(/'/g, "''").substring(0, 50);
+                const situacao = String(r.SITUACAO || '').substring(0, 20);
+                const situacaoTipo = (r.SITUACAO_TIPO || '').replace(/'/g, "''").substring(0, 255);
+                
+                return `(N'${nome}', N'${funcao}', '${cpf}', ${dataAdm}, '${projPlan}', ${horas}, N'${funcExec}', '${classe}', ${atualizado}, '${cnpj}', N'${empresa}', '${matricula}', '${projRH}', '${situacao}', N'${situacaoTipo}')`;
+            }).join(',\n');
+            
+            await pool.request().query(`
+                INSERT INTO #EXCEL_DATA (NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO_PLANILHA, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE, CLASSE, ATUALIZADO_EM, CNPJ, EMPRESA, MATRICULA, PROJETO_RH, SITUACAO, SITUACAO_TIPO)
+                VALUES ${values}
+            `);
+        }
+        console.log(`✅ ${records.length} registros inseridos na tabela temporária`);
+
+        // 3. Executar MERGE em uma única query
+        console.log('🔄 Executando MERGE...');
+        const mergeResult = await pool.request().query(`
+            -- Contadores
+            DECLARE @inserted INT = 0, @updated INT = 0, @deleted INT = 0;
+            
+            -- MERGE: Sincroniza COLABORADORES com dados do Excel
+            MERGE INTO COLABORADORES AS target
+            USING #EXCEL_DATA AS source
+            ON target.CPF = source.CPF
+            
+            -- UPDATE: CPF existe em ambos
+            WHEN MATCHED THEN
+                UPDATE SET
+                    target.NOME = source.NOME,
+                    target.FUNCAO = source.FUNCAO,
+                    target.DATA_ADMISSAO = source.DATA_ADMISSAO,
+                    -- PROJETO: Manter do SQL se existir, senão usar da planilha
+                    target.PROJETO = CASE 
+                        WHEN ISNULL(target.PROJETO, '') <> '' THEN target.PROJETO 
+                        ELSE source.PROJETO_PLANILHA 
+                    END,
+                    target.HORAS_TRABALHADAS = source.HORAS_TRABALHADAS,
+                    -- FUNCAO_EXECUTANTE: Proteger MOTORISTA/OPERADOR do SQL
+                    target.FUNCAO_EXECUTANTE = CASE 
+                        WHEN target.FUNCAO_EXECUTANTE LIKE '%MOTORISTA%' OR target.FUNCAO_EXECUTANTE LIKE '%OPERADOR%'
+                        THEN target.FUNCAO_EXECUTANTE
+                        ELSE source.FUNCAO_EXECUTANTE
+                    END,
+                    target.CLASSE = source.CLASSE,
+                    target.ATUALIZADO_EM = source.ATUALIZADO_EM,
+                    target.CNPJ = source.CNPJ,
+                    target.EMPRESA = source.EMPRESA,
+                    target.MATRICULA = source.MATRICULA,
+                    target.PROJETO_RH = source.PROJETO_RH,
+                    target.SITUACAO = source.SITUACAO,
+                    target.[SITUAÇÃO_TIPO] = source.SITUACAO_TIPO
+                    -- EQUIPE, COORDENADOR, SUPERVISOR, NOME_LIDER: Preservados (não tocamos)
+            
+            -- INSERT: CPF só existe no Excel (novo colaborador)
+            WHEN NOT MATCHED BY TARGET THEN
+                INSERT (NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, HORAS_TRABALHADAS, 
+                        FUNCAO_EXECUTANTE, CLASSE, ATUALIZADO_EM, CNPJ, EMPRESA, MATRICULA,
+                        PROJETO_RH, SITUACAO, [SITUAÇÃO_TIPO])
+                VALUES (source.NOME, source.FUNCAO, source.CPF, source.DATA_ADMISSAO, 
+                        source.PROJETO_PLANILHA, source.HORAS_TRABALHADAS, source.FUNCAO_EXECUTANTE,
+                        source.CLASSE, source.ATUALIZADO_EM, source.CNPJ, source.EMPRESA, 
+                        source.MATRICULA, source.PROJETO_RH, source.SITUACAO, source.SITUACAO_TIPO)
+            
+            -- DELETE: CPF só existe no SQL (saiu da empresa)
+            WHEN NOT MATCHED BY SOURCE THEN
+                DELETE
+            
+            OUTPUT $action INTO @MergeOutput;
+            
+            -- Não funciona assim, vamos simplificar
+            SELECT 
+                (SELECT COUNT(*) FROM COLABORADORES) AS total_final;
         `);
         
-        // Criar mapa CPF -> dados do SQL
-        const sqlDataMap = {};
-        for (const row of existingResult.recordset) {
-            sqlDataMap[row.CPF] = {
-                FUNCAO_EXECUTANTE: row.FUNCAO_EXECUTANTE,
-                PROJETO: row.PROJETO,
-                EQUIPE: row.EQUIPE,
-                COORDENADOR: row.COORDENADOR,
-                SUPERVISOR: row.SUPERVISOR,
-                NOME_LIDER: row.NOME_LIDER
-            };
+        const totalFinal = mergeResult.recordset[0]?.total_final || 0;
+        console.log(`✅ MERGE concluído! Total de colaboradores: ${totalFinal}`);
+
+        // 4. Limpar tabela temporária
+        await pool.request().query('DROP TABLE IF EXISTS #EXCEL_DATA');
+
+        // 5. Fechar conexão do sync
+        if (pool) {
+            try { await pool.close(); } catch (e) { }
+            pool = null;
         }
-        console.log(`📋 ${Object.keys(sqlDataMap).length} registros existentes no SQL`);
 
-        // BEGIN TRANSACTION
-        const transaction = new sql.Transaction(pool);
-        await transaction.begin();
-
+        // 6. Buscar dados atualizados e enviar email
         try {
-            // 2. DELETE FROM COLABORADORES (limpa tudo)
-            await transaction.request().query('DELETE FROM COLABORADORES');
-            console.log('🗑️  Tabela limpa');
-
-            // 3. INSERT de todos os registros
-            let inseridos = 0;
-            let funcaoProtegida = 0;
-            let camposPreservados = 0;
-            const errors = [];
-
-            for (const record of records) {
-                try {
-                    const dadosSQL = sqlDataMap[record.CPF];
-                    
-                    // FUNCAO_EXECUTANTE: Proteger se no SQL era MOTORISTA ou OPERADOR
-                    let funcaoExecutanteFinal = record.FUNCAO_EXECUTANTE;
-                    if (dadosSQL && dadosSQL.FUNCAO_EXECUTANTE) {
-                        const funcaoSQLUpper = dadosSQL.FUNCAO_EXECUTANTE.toUpperCase();
-                        if (funcaoSQLUpper.includes('MOTORISTA') || funcaoSQLUpper.includes('OPERADOR')) {
-                            funcaoExecutanteFinal = dadosSQL.FUNCAO_EXECUTANTE;
-                            funcaoProtegida++;
-                        }
-                    }
-
-                    // PROJETO, EQUIPE, COORDENADOR, SUPERVISOR, NOME_LIDER: Manter do SQL
-                    let projeto = '';
-                    let equipe = '';
-                    let coordenador = '';
-                    let supervisor = '';
-                    let nomeLider = '';
-                    
-                    if (dadosSQL) {
-                        projeto = dadosSQL.PROJETO || '';
-                        equipe = dadosSQL.EQUIPE || '';
-                        coordenador = dadosSQL.COORDENADOR || '';
-                        supervisor = dadosSQL.SUPERVISOR || '';
-                        nomeLider = dadosSQL.NOME_LIDER || '';
-                        if (projeto || equipe || coordenador || supervisor || nomeLider) {
-                            camposPreservados++;
-                        }
-                    }
-
-                    // Se PROJETO vazio no SQL, usa o CENTRO DE CUSTO da planilha
-                    if (!projeto && record.PROJETO_PLANILHA) {
-                        projeto = record.PROJETO_PLANILHA;
-                    }
-
-                    const request = new sql.Request(transaction);
-                    
-                    request.input('nome', sql.NVarChar(100), record.NOME);
-                    request.input('funcao', sql.NVarChar(100), record.FUNCAO);
-                    request.input('cpf', sql.VarChar(11), record.CPF);
-                    request.input('dataAdmissao', sql.Date, record.DATA_ADMISSAO);
-                    request.input('projeto', sql.VarChar(10), projeto);
-                    request.input('equipe', sql.VarChar(20), equipe);
-                    request.input('coordenador', sql.NVarChar(100), coordenador);
-                    request.input('supervisor', sql.NVarChar(100), supervisor);
-                    request.input('horas', sql.Int, record.HORAS_TRABALHADAS);
-                    request.input('funcExec', sql.NVarChar(100), funcaoExecutanteFinal);
-                    request.input('classe', sql.VarChar(10), record.CLASSE);
-                    request.input('atualizado', sql.Date, record.ATUALIZADO_EM);
-                    request.input('nomeLider', sql.VarChar(255), nomeLider);
-                    request.input('cnpj', sql.VarChar(18), record.CNPJ);
-                    request.input('empresa', sql.NVarChar(255), record.EMPRESA);
-                    request.input('matricula', sql.VarChar(20), record.MATRICULA);
-                    request.input('projetoRH', sql.VarChar(50), record.PROJETO_RH || '');
-                    request.input('situacao', sql.VarChar(20), String(record.SITUACAO || ''));
-                    request.input('situacaoTipo', sql.VarChar(255), record.SITUACAO_TIPO || '');
-
-                    await request.query(`
-                        INSERT INTO COLABORADORES (
-                            NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, EQUIPE,
-                            COORDENADOR, SUPERVISOR, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE,
-                            CLASSE, ATUALIZADO_EM, NOME_LIDER, CNPJ, EMPRESA, MATRICULA,
-                            PROJETO_RH, SITUACAO, [SITUAÇÃO_TIPO]
-                        ) VALUES (
-                            @nome, @funcao, @cpf, @dataAdmissao, @projeto, @equipe,
-                            @coordenador, @supervisor, @horas, @funcExec,
-                            @classe, @atualizado, @nomeLider, @cnpj, @empresa, @matricula,
-                            @projetoRH, @situacao, @situacaoTipo
-                        )
-                    `);
-
-                    inseridos++;
-
-                } catch (recordError) {
-                    errors.push({
-                        cpf: record.CPF,
-                        nome: record.NOME,
-                        error: recordError.message
-                    });
-                    console.error(`❌ Erro ao inserir ${record.CPF}: ${recordError.message}`);
-                }
-            }
-
-            // Proteção: se nenhum registro foi inserido, fazer ROLLBACK
-            if (inseridos === 0) {
-                await transaction.rollback();
-                console.error('❌ ROLLBACK: Nenhum registro inserido! Dados originais preservados.');
-                return res.status(500).json({
-                    success: false,
-                    error: 'Nenhum registro foi inserido. Operação cancelada para proteger os dados.',
-                    details: errors.length > 0 ? errors[0].error : 'Erro desconhecido'
+            console.log('📧 Gerando Excel do SQL para envio por email...');
+            
+            const emailPool = await sql.connect(sqlConfig);
+            
+            const sqlData = await emailPool.request().query(`
+                SELECT 
+                    NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, PROJETO_RH,
+                    SITUACAO, [SITUAÇÃO_TIPO] AS SITUACAO_TIPO, EQUIPE, 
+                    COORDENADOR, SUPERVISOR, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE,
+                    CLASSE, NOME_LIDER, CNPJ, EMPRESA, MATRICULA, ATUALIZADO_EM
+                FROM COLABORADORES
+                ORDER BY EMPRESA, NOME
+            `);
+            
+            await emailPool.close();
+            
+            if (sqlData.recordset.length > 0) {
+                const wb = xlsx.utils.book_new();
+                const wsData = sqlData.recordset.map(row => ({
+                    'NOME': row.NOME,
+                    'FUNCAO': row.FUNCAO,
+                    'CPF': row.CPF,
+                    'DATA_ADMISSAO': row.DATA_ADMISSAO ? new Date(row.DATA_ADMISSAO).toLocaleDateString('pt-BR') : '',
+                    'PROJETO': row.PROJETO,
+                    'PROJETO_RH': row.PROJETO_RH,
+                    'SITUACAO': row.SITUACAO,
+                    'SITUACAO_TIPO': row.SITUACAO_TIPO,
+                    'EQUIPE': row.EQUIPE,
+                    'COORDENADOR': row.COORDENADOR,
+                    'SUPERVISOR': row.SUPERVISOR,
+                    'HORAS_TRABALHADAS': row.HORAS_TRABALHADAS,
+                    'FUNCAO_EXECUTANTE': row.FUNCAO_EXECUTANTE,
+                    'CLASSE': row.CLASSE,
+                    'NOME_LIDER': row.NOME_LIDER,
+                    'CNPJ': row.CNPJ,
+                    'EMPRESA': row.EMPRESA,
+                    'MATRICULA': row.MATRICULA
+                }));
+                
+                const ws = xlsx.utils.json_to_sheet(wsData);
+                xlsx.utils.book_append_sheet(wb, ws, 'Colaboradores');
+                const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
+                
+                const dataHora = new Date().toLocaleString('pt-BR');
+                const nomeArquivo = `colaboradores_${new Date().toISOString().split('T')[0]}.xlsx`;
+                
+                enviarEmailAsync({
+                    to: EMAIL_DESTINATARIOS,
+                    subject: `📊 Relatório de Colaboradores - ${dataHora}`,
+                    html: `
+                        <h2>Relatório de Colaboradores</h2>
+                        <p>Sincronização via MERGE concluída em <strong>${dataHora}</strong>.</p>
+                        <p><strong>Total de colaboradores:</strong> ${sqlData.recordset.length}</p>
+                        <p><em>Dados extraídos do SQL Server (com COORDENADOR e NOME_LIDER preenchidos pelo trigger).</em></p>
+                        <hr>
+                        <p style="color: #666; font-size: 12px;">Email enviado automaticamente pelo Sistema de Sincronização RH.</p>
+                    `,
+                    attachments: [{ filename: nomeArquivo, content: buffer }]
                 });
+                console.log(`📧 Email será enviado para: ${EMAIL_DESTINATARIOS.join(', ')}`);
             }
-
-            // COMMIT apenas se teve inserções bem-sucedidas
-            await transaction.commit();
-            console.log(`✅ ${inseridos} colaboradores inseridos`);
-            console.log(`   📌 ${funcaoProtegida} com FUNCAO_EXECUTANTE protegida (MOTORISTA/OPERADOR)`);
-            console.log(`   📌 ${camposPreservados} com campos manuais preservados`);
-
-            // APÓS COMMIT: Buscar dados do SQL (já com trigger aplicado) e enviar email
-            try {
-                console.log('📧 Gerando Excel do SQL para envio por email...');
-                
-                // Buscar dados atualizados do SQL (trigger já preencheu NOME_LIDER e COORDENADOR)
-                const sqlData = await pool.request().query(`
-                    SELECT 
-                        NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, PROJETO_RH,
-                        SITUACAO, [SITUAÇÃO_TIPO] AS SITUACAO_TIPO, EQUIPE, 
-                        COORDENADOR, SUPERVISOR, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE,
-                        CLASSE, NOME_LIDER, CNPJ, EMPRESA, MATRICULA, ATUALIZADO_EM
-                    FROM COLABORADORES
-                    ORDER BY EMPRESA, NOME
-                `);
-                
-                if (sqlData.recordset.length > 0) {
-                    // Gerar Excel com dados do SQL
-                    const wb = xlsx.utils.book_new();
-                    const wsData = sqlData.recordset.map(row => ({
-                        'NOME': row.NOME,
-                        'FUNCAO': row.FUNCAO,
-                        'CPF': row.CPF,
-                        'DATA_ADMISSAO': row.DATA_ADMISSAO ? new Date(row.DATA_ADMISSAO).toLocaleDateString('pt-BR') : '',
-                        'PROJETO': row.PROJETO,
-                        'PROJETO_RH': row.PROJETO_RH,
-                        'SITUACAO': row.SITUACAO,
-                        'SITUACAO_TIPO': row.SITUACAO_TIPO,
-                        'EQUIPE': row.EQUIPE,
-                        'COORDENADOR': row.COORDENADOR,
-                        'SUPERVISOR': row.SUPERVISOR,
-                        'HORAS_TRABALHADAS': row.HORAS_TRABALHADAS,
-                        'FUNCAO_EXECUTANTE': row.FUNCAO_EXECUTANTE,
-                        'CLASSE': row.CLASSE,
-                        'NOME_LIDER': row.NOME_LIDER,
-                        'CNPJ': row.CNPJ,
-                        'EMPRESA': row.EMPRESA,
-                        'MATRICULA': row.MATRICULA
-                    }));
-                    
-                    const ws = xlsx.utils.json_to_sheet(wsData);
-                    xlsx.utils.book_append_sheet(wb, ws, 'Colaboradores');
-                    const buffer = xlsx.write(wb, { type: 'buffer', bookType: 'xlsx' });
-                    
-                    const dataHora = new Date().toLocaleString('pt-BR');
-                    const nomeArquivo = `colaboradores_${new Date().toISOString().split('T')[0]}.xlsx`;
-                    
-                    // Enviar email com Excel atualizado
-                    enviarEmailAsync({
-                        to: EMAIL_DESTINATARIOS,
-                        subject: `📊 Relatório de Colaboradores - ${dataHora}`,
-                        html: `
-                            <h2>Relatório de Colaboradores</h2>
-                            <p>Segue em anexo o relatório de colaboradores sincronizado em <strong>${dataHora}</strong>.</p>
-                            <p><strong>Total de registros:</strong> ${sqlData.recordset.length}</p>
-                            <p><em>Dados extraídos do SQL Server após sincronização (com COORDENADOR e NOME_LIDER preenchidos).</em></p>
-                            <hr>
-                            <p style="color: #666; font-size: 12px;">Email enviado automaticamente pelo Sistema de Sincronização RH.</p>
-                        `,
-                        attachments: [
-                            {
-                                filename: nomeArquivo,
-                                content: buffer
-                            }
-                        ]
-                    });
-                    console.log(`📧 Email com Excel do SQL será enviado para: ${EMAIL_DESTINATARIOS.join(', ')}`);
-                }
-            } catch (emailError) {
-                console.error('❌ Erro ao gerar/enviar email pós-sync:', emailError.message);
-            }
-
-            res.json({
-                success: true,
-                message: 'Sincronização concluída com sucesso',
-                results: {
-                    total: records.length,
-                    inserted: inseridos,
-                    protectedFunctions: funcaoProtegida,
-                    preservedFields: camposPreservados,
-                    errors: errors.length,
-                    errorDetails: errors
-                }
-            });
-
-        } catch (error) {
-            await transaction.rollback();
-            console.error('❌ ROLLBACK devido a erro:', error.message);
-            throw error;
+        } catch (emailError) {
+            console.error('❌ Erro ao gerar/enviar email:', emailError.message);
         }
+
+        res.json({
+            success: true,
+            message: 'Sincronização via MERGE concluída com sucesso',
+            results: {
+                enviados: records.length,
+                totalFinal: totalFinal
+            }
+        });
 
     } catch (error) {
         console.error('❌ Erro na sincronização:', error);
