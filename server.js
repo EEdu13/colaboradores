@@ -1035,7 +1035,8 @@ async function backupParaHistorico() {
                 END AS SITUACAO_TIPO,
                 EQUIPE, COORDENADOR, SUPERVISOR,
                 HORAS_TRABALHADAS, FUNCAO_EXECUTANTE, CLASSE, NOME_LIDER,
-                CNPJ, EMPRESA, MATRICULA, ATUALIZADO_EM, GETDATE()
+                CNPJ, EMPRESA, MATRICULA, ATUALIZADO_EM,
+                DATEADD(HOUR, -3, GETDATE())
             FROM COLABORADORES
         `);
 
@@ -1074,15 +1075,15 @@ async function backupParaHistorico() {
     }
 }
 
-// Agendar CRON: todos os dias às 23:50 (horário do servidor)
+// Agendar CRON: todos os dias às 22:30 (horário de Brasília)
 // Formato: minuto hora dia mês dia-da-semana
-cron.schedule('50 23 * * *', () => {
+cron.schedule('30 22 * * *', () => {
     backupParaHistorico();
 }, {
     timezone: 'America/Sao_Paulo'
 });
 
-console.log('⏰ CRON agendado: Backup diário às 23:50 (Brasília)');
+console.log('⏰ CRON agendado: Backup diário às 22:30 (Brasília)');
 
 // Rota manual para executar o backup (para testes)
 app.post('/api/backup-historico', async (req, res) => {
@@ -1105,7 +1106,7 @@ app.listen(PORT, () => {
     console.log(`║  🚀 Servidor: http://localhost:${PORT.toString().padEnd(25)} ║`);
     console.log('║  📊 Endpoint: POST /api/upload                     ║');
     console.log('║  🔄 Endpoint: POST /api/sync                       ║');
-    console.log('║  ⏰ CRON: Backup histórico às 23:50                ║');
+    console.log('║  ⏰ CRON: Backup histórico às 22:30                ║');
     console.log('╚════════════════════════════════════════════════════╝');
 });
 
