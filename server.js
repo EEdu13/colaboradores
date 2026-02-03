@@ -6,7 +6,7 @@ const sql = require('mssql');
 const cors = require('cors');
 const path = require('path');
 const fs = require('fs');
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 const cron = require('node-cron');
 
 const app = express();
@@ -20,28 +20,13 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
-// Configuração do Email - Microsoft 365 / Outlook
+// Configuração do Email - Resend
 // EMAIL_ENABLED=false para desabilitar envio de email
 const EMAIL_ENABLED = process.env.EMAIL_ENABLED !== 'false';
 
-// Configuração SMTP - Microsoft 365
-const emailTransporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.office365.com',
-    port: parseInt(process.env.EMAIL_PORT) || 587,
-    secure: false, // Office 365 usa STARTTLS
-    requireTLS: true,
-    connectionTimeout: 30000,
-    greetingTimeout: 30000,
-    socketTimeout: 30000,
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS
-    },
-    tls: {
-        ciphers: 'SSLv3',
-        rejectUnauthorized: false
-    }
-});
+// Configuração Resend API
+const resend = new Resend(process.env.RESEND_API_KEY);
+const EMAIL_FROM = process.env.EMAIL_FROM || 'noreply@larsil.com.br';
 
 // Função para enviar email sem bloquear (fire and forget)
 function enviarEmailAsync(mailOptions) {
@@ -50,13 +35,19 @@ function enviarEmailAsync(mailOptions) {
         return;
     }
     
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-        console.log('📧 Email não configurado (EMAIL_USER/EMAIL_PASS não definidos)');
+    if (!process.env.RESEND_API_KEY) {
+        console.log('📧 Email não configurado (RESEND_API_KEY não definido)');
         return;
     }
     
     // Enviar sem await - não bloqueia a resposta
-    emailTransporter.sendMail(mailOptions)
+    resend.emails.send({
+        from: mailOptions.from || EMAIL_FROM,
+        to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+        subject: mailOptions.subject,
+        html: mailOptions.html,
+        attachments: mailOptions.attachments
+    })
         .then(() => console.log(`📧 Email enviado para: ${mailOptions.to}`))
         .catch(err => console.error('❌ Erro ao enviar email:', err.message));
 }
@@ -1034,10 +1025,10 @@ async function backupParaHistorico() {
 
         console.log(`✅ [CRON] Backup concluído! ${result.rowsAffected[0]} registros copiados para histórico`);
 
-        // Enviar email de confirmação
+        // Enviar email de confirmação via Resend
         try {
-            await emailTransporter.sendMail({
-                from: process.env.EMAIL_USER || 'noreply@alrflorestal.com.br',
+            await resend.emails.send({
+                from: EMAIL_FROM,
                 to: EMAIL_DESTINATARIOS,
                 subject: `✅ Backup Diário Colaboradores - ${dataHoje}`,
                 html: `

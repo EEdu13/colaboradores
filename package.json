@@ -15,6 +15,7 @@
     "multer": "^1.4.5-lts.1",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.13",
+    "resend": "^6.9.1",
     "xlsjs": "^1.0.1",
     "xlsx": "^0.18.5"
   },
