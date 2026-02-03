@@ -1074,15 +1074,15 @@ async function backupParaHistorico() {
     }
 }
 
-// Agendar CRON: todos os dias às 00:30 (horário do servidor)
+// Agendar CRON: todos os dias às 23:50 (horário do servidor)
 // Formato: minuto hora dia mês dia-da-semana
-cron.schedule('30 0 * * *', () => {
+cron.schedule('50 23 * * *', () => {
     backupParaHistorico();
 }, {
     timezone: 'America/Sao_Paulo'
 });
 
-console.log('⏰ CRON agendado: Backup diário às 00:30 (Brasília)');
+console.log('⏰ CRON agendado: Backup diário às 23:50 (Brasília)');
 
 // Rota manual para executar o backup (para testes)
 app.post('/api/backup-historico', async (req, res) => {
