@@ -572,15 +572,20 @@ app.post('/api/sync', async (req, res) => {
     console.log(`📊 SYNC: Recebidos ${records.length} registros para sincronizar via MERGE`);
 
     let pool = null;
+    const tableId = `SYNC_${Date.now()}`; // Tabela única por sync
 
     try {
         pool = await sql.connect(sqlConfig);
         
-        // 1. Criar tabela temporária com os dados do Excel
-        console.log('📋 Criando tabela temporária...');
-        await pool.request().query(`
-            IF OBJECT_ID('tempdb..#EXCEL_DATA') IS NOT NULL DROP TABLE #EXCEL_DATA;
-            CREATE TABLE #EXCEL_DATA (
+        // Usar uma única request para manter a sessão da tabela temporária
+        const request = pool.request();
+        request.timeout = 300000; // 5 minutos
+        
+        // 1. Criar tabela temporária GLOBAL (visível em todas as conexões)
+        console.log('📋 Criando tabela temporária global...');
+        await request.query(`
+            IF OBJECT_ID('tempdb..##EXCEL_DATA_${tableId}') IS NOT NULL DROP TABLE ##EXCEL_DATA_${tableId};
+            CREATE TABLE ##EXCEL_DATA_${tableId} (
                 NOME NVARCHAR(100),
                 FUNCAO NVARCHAR(100),
                 CPF VARCHAR(11) PRIMARY KEY,
@@ -626,8 +631,8 @@ app.post('/api/sync', async (req, res) => {
                 return `(N'${nome}', N'${funcao}', '${cpf}', ${dataAdm}, '${projPlan}', ${horas}, N'${funcExec}', '${classe}', ${atualizado}, '${cnpj}', N'${empresa}', '${matricula}', '${projRH}', '${situacao}', N'${situacaoTipo}')`;
             }).join(',\n');
             
-            await pool.request().query(`
-                INSERT INTO #EXCEL_DATA (NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO_PLANILHA, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE, CLASSE, ATUALIZADO_EM, CNPJ, EMPRESA, MATRICULA, PROJETO_RH, SITUACAO, SITUACAO_TIPO)
+            await request.query(`
+                INSERT INTO ##EXCEL_DATA_${tableId} (NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO_PLANILHA, HORAS_TRABALHADAS, FUNCAO_EXECUTANTE, CLASSE, ATUALIZADO_EM, CNPJ, EMPRESA, MATRICULA, PROJETO_RH, SITUACAO, SITUACAO_TIPO)
                 VALUES ${values}
             `);
         }
@@ -635,13 +640,10 @@ app.post('/api/sync', async (req, res) => {
 
         // 3. Executar MERGE em uma única query
         console.log('🔄 Executando MERGE...');
-        const mergeResult = await pool.request().query(`
-            -- Contadores
-            DECLARE @inserted INT = 0, @updated INT = 0, @deleted INT = 0;
-            
+        const mergeResult = await request.query(`
             -- MERGE: Sincroniza COLABORADORES com dados do Excel
             MERGE INTO COLABORADORES AS target
-            USING #EXCEL_DATA AS source
+            USING ##EXCEL_DATA_${tableId} AS source
             ON target.CPF = source.CPF
             
             -- UPDATE: CPF existe em ambos
@@ -684,20 +686,17 @@ app.post('/api/sync', async (req, res) => {
             
             -- DELETE: CPF só existe no SQL (saiu da empresa)
             WHEN NOT MATCHED BY SOURCE THEN
-                DELETE
+                DELETE;
             
-            OUTPUT $action INTO @MergeOutput;
-            
-            -- Não funciona assim, vamos simplificar
-            SELECT 
-                (SELECT COUNT(*) FROM COLABORADORES) AS total_final;
+            -- Retornar total
+            SELECT (SELECT COUNT(*) FROM COLABORADORES) AS total_final;
         `);
         
         const totalFinal = mergeResult.recordset[0]?.total_final || 0;
         console.log(`✅ MERGE concluído! Total de colaboradores: ${totalFinal}`);
 
-        // 4. Limpar tabela temporária
-        await pool.request().query('DROP TABLE IF EXISTS #EXCEL_DATA');
+        // 4. Limpar tabela temporária global
+        await request.query(`DROP TABLE IF EXISTS ##EXCEL_DATA_${tableId}`);
 
         // 5. Fechar conexão do sync
         if (pool) {
@@ -783,6 +782,13 @@ app.post('/api/sync', async (req, res) => {
 
     } catch (error) {
         console.error('❌ Erro na sincronização:', error);
+        // Tentar limpar tabela temporária em caso de erro
+        try {
+            if (pool) {
+                await pool.request().query(`DROP TABLE IF EXISTS ##EXCEL_DATA_${tableId}`);
+            }
+        } catch (e) { }
+        
         res.status(500).json({
             success: false,
             error: 'Erro ao sincronizar com banco de dados',
