@@ -20,20 +20,25 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.static('public'));
 
-// Configuração do Email (credenciais em variáveis de ambiente)
+// Configuração do Email - Microsoft 365 / Outlook
 // EMAIL_ENABLED=false para desabilitar envio de email
 const EMAIL_ENABLED = process.env.EMAIL_ENABLED !== 'false';
 
 const emailTransporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'mail.larsil.com.br',
-    port: parseInt(process.env.EMAIL_PORT) || 465,
-    secure: true,
-    connectionTimeout: 5000, // 5 segundos para conectar
-    greetingTimeout: 5000,
-    socketTimeout: 10000, // 10 segundos total
+    host: process.env.EMAIL_HOST || 'smtp.office365.com',
+    port: parseInt(process.env.EMAIL_PORT) || 587,
+    secure: false, // Office 365 usa STARTTLS na porta 587
+    requireTLS: true,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
     auth: {
-        user: process.env.EMAIL_USER || 'noreply@larsil.com.br',
+        user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS
+    },
+    tls: {
+        ciphers: 'SSLv3',
+        rejectUnauthorized: false
     }
 });
 
@@ -41,6 +46,11 @@ const emailTransporter = nodemailer.createTransport({
 function enviarEmailAsync(mailOptions) {
     if (!EMAIL_ENABLED) {
         console.log('📧 Email desabilitado (EMAIL_ENABLED=false)');
+        return;
+    }
+    
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+        console.log('📧 Email não configurado (EMAIL_USER/EMAIL_PASS não definidos)');
         return;
     }
     
