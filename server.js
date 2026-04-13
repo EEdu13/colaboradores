@@ -1107,7 +1107,7 @@ async function backupParaHistorico() {
         pool = await sql.connect(sqlConfig);
 
         // Copiar todos os registros de COLABORADORES para COLABORADORES_HISTORICO
-        // SITUACAO_TIPO é calculado com CASE porque não existe na tabela original
+        // SITUACAO_TIPO é calculado com CASE baseado no mapeamento oficial do RH
         const result = await pool.request().query(`
             INSERT INTO COLABORADORES_HISTORICO (
                 NOME, FUNCAO, CPF, DATA_ADMISSAO, PROJETO, PROJETO_RH,
@@ -1120,30 +1120,30 @@ async function backupParaHistorico() {
                 SITUACAO,
                 CASE 
                     WHEN SITUACAO = '1' THEN 'Trabalhando'
-                    WHEN SITUACAO = '2' THEN 'Férias'
-                    WHEN SITUACAO = '3' THEN 'Licença Remunerada'
-                    WHEN SITUACAO = '4' THEN 'Licença não Remunerada'
-                    WHEN SITUACAO = '5' THEN 'Lic. Maternidade/Paternidade'
-                    WHEN SITUACAO = '6' THEN 'Auxílio Doença / Acidente Trabalho'
-                    WHEN SITUACAO = '7' THEN 'Afastado'
+                    WHEN SITUACAO = '2' THEN 'Afastado Direitos Integrais'
+                    WHEN SITUACAO = '3' THEN 'Acid. Trabalho periodo superior a 15 dias'
+                    WHEN SITUACAO = '4' THEN 'Servico Militar'
+                    WHEN SITUACAO = '5' THEN 'Licenca maternidade'
+                    WHEN SITUACAO = '6' THEN 'Doenca periodo superior a 15 dias'
+                    WHEN SITUACAO = '7' THEN 'Licenca sem Vencimento'
                     WHEN SITUACAO = '8' THEN 'Demitido'
-                    WHEN SITUACAO = '9' THEN 'Aviso Prévio'
-                    WHEN SITUACAO = '10' THEN 'Em Experiência'
-                    WHEN SITUACAO = '11' THEN 'Férias Vencidas'
-                    WHEN SITUACAO = '12' THEN 'Banco de Horas'
-                    WHEN SITUACAO = '13' THEN 'Licença Militar'
-                    WHEN SITUACAO = '14' THEN 'Aposentadoria por Invalidez'
-                    WHEN SITUACAO = '15' THEN 'Cedido para Outra Empresa'
-                    WHEN SITUACAO = '16' THEN 'Treinamento'
-                    WHEN SITUACAO = '17' THEN 'Aguardando Rescisão'
-                    WHEN SITUACAO = '18' THEN 'Transferido'
-                    WHEN SITUACAO = '19' THEN 'Contrato Suspenso'
-                    WHEN SITUACAO = '20' THEN 'Justa Causa'
-                    WHEN SITUACAO = '21' THEN 'Readaptação'
-                    WHEN SITUACAO = '22' THEN 'Meio Período'
-                    WHEN SITUACAO = '23' THEN 'Home Office'
-                    WHEN SITUACAO = '24' THEN 'Intermitente'
-                    WHEN SITUACAO = '25' THEN 'Estagiário'
+                    WHEN SITUACAO = '9' THEN 'Ferias'
+                    WHEN SITUACAO = '10' THEN 'Novo afast. mesmo acid. trabalho'
+                    WHEN SITUACAO = '11' THEN 'Antecipacao e/ou prorrogacao Licenca Maternidade'
+                    WHEN SITUACAO = '12' THEN 'Novo afast. mesma doenca'
+                    WHEN SITUACAO = '13' THEN 'Exercicio de mandato sindical'
+                    WHEN SITUACAO = '14' THEN 'Aposent. por invalid. acidente de trabalho'
+                    WHEN SITUACAO = '15' THEN 'Aposent. por invalid. doenca profissional'
+                    WHEN SITUACAO = '16' THEN 'Aposent. por invalid. exceto acid. trab. e doenca profissional'
+                    WHEN SITUACAO = '17' THEN 'Acid. Trabalho periodo igual ou inferior a 15 dias'
+                    WHEN SITUACAO = '18' THEN 'Doenca periodo igual ou inferior a 15 dias'
+                    WHEN SITUACAO = '19' THEN 'Aborto nao criminoso'
+                    WHEN SITUACAO = '20' THEN 'Licenca maternidade adocao 1 ano'
+                    WHEN SITUACAO = '21' THEN 'Licenca maternidade adocao 1 a 4 anos'
+                    WHEN SITUACAO = '22' THEN 'Licenca maternidade adocao 4 a 8 anos'
+                    WHEN SITUACAO = '24' THEN 'Outros motivos de afastamento'
+                    WHEN SITUACAO = '90' THEN 'Suspensao contratual decorrente acao trabalhista por rescisao indireta'
+                    WHEN SITUACAO = '91' THEN 'Suspensao contratual para inquerito de apuracao de falta grave'
                     ELSE ''
                 END AS SITUACAO_TIPO,
                 EQUIPE, COORDENADOR, SUPERVISOR,
