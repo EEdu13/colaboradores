@@ -130,6 +130,28 @@
         </section>
     </main>
 
+    <!-- Modal de confirmação de deletes -->
+    <div id="deleteModal" class="fixed inset-0 bg-black bg-opacity-50 hidden flex items-center justify-center z-50">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full mx-4 overflow-hidden">
+            <div class="bg-red-600 px-6 py-4 flex items-center space-x-3">
+                <i class="fas fa-exclamation-triangle text-white text-2xl"></i>
+                <h3 class="text-xl font-bold text-white">Atenção — Colaboradores serão removidos</h3>
+            </div>
+            <div class="p-6">
+                <div id="deleteModalBody" class="mb-6 text-gray-700"></div>
+                <div id="deleteList" class="max-h-56 overflow-y-auto border rounded-lg mb-6 text-sm"></div>
+                <div class="flex justify-end space-x-3">
+                    <button id="modalCancelBtn" class="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-100 font-medium">
+                        <i class="fas fa-times mr-2"></i>Cancelar
+                    </button>
+                    <button id="modalConfirmBtn" class="px-6 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium">
+                        <i class="fas fa-check mr-2"></i>Confirmar e Sincronizar
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const dropZone = document.getElementById('dropZone');
         const fileInput = document.getElementById('fileInput');
@@ -141,6 +163,7 @@
         const syncBtn = document.getElementById('syncBtn');
         const syncResultSection = document.getElementById('syncResultSection');
         let currentData = null;
+        let pendingSync = false;
 
         function formatCPF(cpf) {
             if (!cpf || cpf.length !== 11) return cpf;
@@ -248,9 +271,20 @@
             resultsSection.classList.remove('hidden');
         }
 
-        syncBtn.addEventListener('click', async () => {
-            if (!currentData) return;
+        // Modal handlers
+        document.getElementById('modalCancelBtn').addEventListener('click', () => {
+            document.getElementById('deleteModal').classList.add('hidden');
+            pendingSync = false;
+            syncBtn.disabled = false;
+            syncBtn.innerHTML = '<i class="fas fa-database mr-2"></i>Enviar para SQL';
+        });
 
+        document.getElementById('modalConfirmBtn').addEventListener('click', async () => {
+            document.getElementById('deleteModal').classList.add('hidden');
+            await executarSync();
+        });
+
+        async function executarSync() {
             syncBtn.disabled = true;
             syncBtn.innerHTML = '<div class="spinner inline-block mr-2"></div> Sincronizando...';
 
@@ -258,7 +292,7 @@
                 const response = await fetch('/api/sync', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ records: currentData.allValidRecords })
+                    body: JSON.stringify({ records: currentData.allValidRecords, confirmed: true })
                 });
 
                 const data = await response.json();
@@ -267,56 +301,141 @@
                     throw new Error(data.error || 'Erro ao sincronizar');
                 }
 
-                document.getElementById('syncResultCard').innerHTML = `
-                    <div class="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                        <i class="fas fa-check-circle text-green-600 text-4xl"></i>
-                    </div>
-                    <h3 class="text-2xl font-bold text-green-600 mb-2">✅ Sincronização Concluída!</h3>
-                    <p class="text-gray-600 mb-6">${data.results.totalFinal} colaboradores no banco</p>
-                    <div class="flex justify-center space-x-4">
-                        <button id="downloadSqlExcelBtn" class="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg">
-                            <i class="fas fa-file-excel mr-2"></i>Baixar Excel do SQL
-                        </button>
-                        <button onclick="location.reload()" class="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg">
-                            <i class="fas fa-redo mr-2"></i>Nova Importação
-                        </button>
-                    </div>
-                `;
+                // Monta card de sucesso via DOM (sem innerHTML com dados externos)
+                const card = document.getElementById('syncResultCard');
+                card.innerHTML = '';
+
+                const icon = document.createElement('div');
+                icon.className = 'w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-4';
+                icon.innerHTML = '<i class="fas fa-check-circle text-green-600 text-4xl"></i>';
+                card.appendChild(icon);
+
+                const title = document.createElement('h3');
+                title.className = 'text-2xl font-bold text-green-600 mb-2';
+                title.textContent = 'Sincronização Concluída!';
+                card.appendChild(title);
+
+                const info = document.createElement('p');
+                info.className = 'text-gray-600 mb-6';
+                info.textContent = `${data.results.totalFinal} colaboradores no banco`;
+                card.appendChild(info);
+
+                const btns = document.createElement('div');
+                btns.className = 'flex justify-center space-x-4';
+
+                const dlBtn = document.createElement('button');
+                dlBtn.id = 'downloadSqlExcelBtn';
+                dlBtn.className = 'bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg';
+                dlBtn.innerHTML = '<i class="fas fa-file-excel mr-2"></i>Baixar Excel do SQL';
+                btns.appendChild(dlBtn);
+
+                const reloadBtn = document.createElement('button');
+                reloadBtn.className = 'bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg';
+                reloadBtn.innerHTML = '<i class="fas fa-redo mr-2"></i>Nova Importação';
+                reloadBtn.addEventListener('click', () => location.reload());
+                btns.appendChild(reloadBtn);
+
+                card.appendChild(btns);
                 syncResultSection.classList.remove('hidden');
-                
-                // Adicionar evento ao botão de download
-                document.getElementById('downloadSqlExcelBtn').addEventListener('click', async () => {
-                    const btn = document.getElementById('downloadSqlExcelBtn');
-                    btn.disabled = true;
-                    btn.innerHTML = '<div class="spinner inline-block mr-2"></div> Baixando...';
-                    
+
+                dlBtn.addEventListener('click', async () => {
+                    dlBtn.disabled = true;
+                    dlBtn.innerHTML = '<div class="spinner inline-block mr-2"></div> Baixando...';
                     try {
-                        const response = await fetch('/api/download-sql-excel');
-                        if (!response.ok) {
-                            const errorData = await response.json();
-                            throw new Error(errorData.error || 'Erro ao baixar Excel');
-                        }
-                        
-                        const blob = await response.blob();
-                        const url = window.URL.createObjectURL(blob);
+                        const r = await fetch('/api/download-sql-excel');
+                        if (!r.ok) { const e = await r.json(); throw new Error(e.error || 'Erro ao baixar Excel'); }
+                        const blob = await r.blob();
+                        const url = URL.createObjectURL(blob);
                         const a = document.createElement('a');
                         a.href = url;
                         a.download = `colaboradores_sql_${new Date().toISOString().split('T')[0]}.xlsx`;
                         document.body.appendChild(a);
                         a.click();
-                        window.URL.revokeObjectURL(url);
+                        URL.revokeObjectURL(url);
                         a.remove();
-                    } catch (error) {
-                        alert('Erro: ' + error.message);
+                    } catch (err) {
+                        alert('Erro: ' + err.message);
                     } finally {
-                        btn.disabled = false;
-                        btn.innerHTML = '<i class="fas fa-file-excel mr-2"></i>Baixar Excel do SQL';
+                        dlBtn.disabled = false;
+                        dlBtn.innerHTML = '<i class="fas fa-file-excel mr-2"></i>Baixar Excel do SQL';
                     }
                 });
 
             } catch (error) {
                 alert('Erro: ' + error.message);
             } finally {
+                syncBtn.disabled = false;
+                syncBtn.innerHTML = '<i class="fas fa-database mr-2"></i>Enviar para SQL';
+            }
+        }
+
+        syncBtn.addEventListener('click', async () => {
+            if (!currentData) return;
+
+            // Passo 1: buscar preview de impacto
+            syncBtn.disabled = true;
+            syncBtn.innerHTML = '<div class="spinner inline-block mr-2"></div> Verificando impacto...';
+
+            try {
+                const cpfs = currentData.allValidRecords.map(r => r.CPF);
+                const previewRes = await fetch('/api/sync-preview', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ cpfs })
+                });
+                const preview = await previewRes.json();
+
+                if (!previewRes.ok || !preview.success) {
+                    throw new Error(preview.error || 'Erro ao verificar impacto');
+                }
+
+                // Passo 2: se vai deletar mais de 10, exige confirmação
+                if (preview.toDeleteCount > 10) {
+                    // Monta body do modal com textContent (seguro)
+                    const body = document.getElementById('deleteModalBody');
+                    body.innerHTML = '';
+
+                    const p1 = document.createElement('p');
+                    p1.className = 'mb-2';
+                    const s1 = document.createElement('strong');
+                    s1.textContent = `${preview.toDeleteCount} colaboradores`;
+                    p1.appendChild(s1);
+                    p1.appendChild(document.createTextNode(' serão removidos do banco porque não estão na planilha enviada.'));
+                    body.appendChild(p1);
+
+                    const p2 = document.createElement('p');
+                    p2.className = 'text-sm text-gray-500';
+                    p2.textContent = `Planilha: ${preview.uploadCount} registros · Banco atual: ${preview.currentCount} colaboradores`;
+                    body.appendChild(p2);
+
+                    // Lista dos que seriam deletados (DOM seguro)
+                    const list = document.getElementById('deleteList');
+                    list.innerHTML = '';
+                    preview.toDelete.forEach(c => {
+                        const row = document.createElement('div');
+                        row.className = 'flex justify-between px-3 py-2 border-b last:border-0 hover:bg-gray-50';
+
+                        const nome = document.createElement('span');
+                        nome.className = 'font-medium text-gray-800';
+                        nome.textContent = c.NOME;
+
+                        const detalhes = document.createElement('span');
+                        detalhes.className = 'text-gray-500 text-xs self-center';
+                        detalhes.textContent = [c.EQUIPE, c.PROJETO, c.EMPRESA].filter(Boolean).join(' · ');
+
+                        row.appendChild(nome);
+                        row.appendChild(detalhes);
+                        list.appendChild(row);
+                    });
+
+                    document.getElementById('deleteModal').classList.remove('hidden');
+                    // executarSync será chamado pelo botão de confirmação do modal
+                } else {
+                    // Menos de 10 deletes: executa direto
+                    await executarSync();
+                }
+            } catch (error) {
+                alert('Erro: ' + error.message);
                 syncBtn.disabled = false;
                 syncBtn.innerHTML = '<i class="fas fa-database mr-2"></i>Enviar para SQL';
             }

@@ -552,21 +552,117 @@ app.post('/api/upload', upload.single('file'), async (req, res) => {
     }
 });
 
+// =============================================================================
+// PREVIEW: Analisa impacto do sync sem alterar nada no banco
+// =============================================================================
+app.post('/api/sync-preview', async (req, res) => {
+    const { cpfs } = req.body; // Array de CPFs que estão na planilha
+
+    if (!cpfs || !Array.isArray(cpfs) || cpfs.length === 0) {
+        return res.status(400).json({ success: false, error: 'Nenhum CPF recebido' });
+    }
+
+    // Sanitiza e valida CPFs antes de qualquer uso no banco
+    const cpfsSanitizados = cpfs
+        .map(c => String(c).replace(/\D/g, '').substring(0, 11))
+        .filter(c => /^\d{11}$/.test(c));
+
+    if (cpfsSanitizados.length === 0) {
+        return res.status(400).json({ success: false, error: 'Nenhum CPF válido recebido' });
+    }
+
+    let pool = null;
+    try {
+        pool = await sql.connect(sqlConfig);
+
+        // Total atual no banco
+        const countResult = await pool.request().query(`SELECT COUNT(*) AS total FROM COLABORADORES`);
+        const currentCount = countResult.recordset[0].total;
+
+        // Quem seria deletado (está no banco mas não veio na planilha)
+        // Usa tabela temporária com parâmetros nomeados (sem interpolação de strings)
+        const tableId = `PREV_${Date.now()}`;
+        const req2 = pool.request();
+        await req2.query(`
+            IF OBJECT_ID('tempdb..##CPF_PREV_${tableId}') IS NOT NULL DROP TABLE ##CPF_PREV_${tableId};
+            CREATE TABLE ##CPF_PREV_${tableId} (CPF VARCHAR(11) PRIMARY KEY);
+        `);
+
+        const batchSize = 500;
+        for (let i = 0; i < cpfsSanitizados.length; i += batchSize) {
+            const batch = cpfsSanitizados.slice(i, i + batchSize);
+            const r = pool.request();
+            const placeholders = batch.map((c, idx) => {
+                r.input(`cpf${idx}`, sql.VarChar(11), c);
+                return `(@cpf${idx})`;
+            }).join(',');
+            await r.query(`INSERT INTO ##CPF_PREV_${tableId} (CPF) VALUES ${placeholders}`);
+        }
+
+        const toDeleteResult = await req2.query(`
+            SELECT NOME, EQUIPE, PROJETO, EMPRESA
+            FROM COLABORADORES
+            WHERE CPF NOT IN (SELECT CPF FROM ##CPF_PREV_${tableId})
+            ORDER BY EMPRESA, NOME
+        `);
+
+        await req2.query(`DROP TABLE IF EXISTS ##CPF_PREV_${tableId}`);
+
+        res.json({
+            success: true,
+            currentCount,
+            uploadCount: cpfs.length,
+            toDelete: toDeleteResult.recordset,
+            toDeleteCount: toDeleteResult.recordset.length
+        });
+
+    } catch (error) {
+        console.error('❌ Erro no preview:', error);
+        res.status(500).json({ success: false, error: error.message });
+    } finally {
+        if (pool) try { await pool.close(); } catch (e) {}
+    }
+});
+
 app.post('/api/sync', async (req, res) => {
-    const { records } = req.body;
+    const { records, confirmed } = req.body;
 
     if (!records || !Array.isArray(records) || records.length === 0) {
         console.log('❌ SYNC: Nenhum registro recebido - ABORTANDO para proteger dados');
         return res.status(400).json({ success: false, error: 'Nenhum registro para sincronizar. Operação cancelada para proteger os dados existentes.' });
     }
 
-    // Proteção extra: não sincronizar se tiver menos de 100 registros (provavelmente erro)
+    // Proteção 1: mínimo absoluto de 100 registros
     if (records.length < 100) {
         console.log(`⚠️ SYNC: Apenas ${records.length} registros - quantidade suspeita, ABORTANDO`);
-        return res.status(400).json({ 
-            success: false, 
-            error: `Apenas ${records.length} registros recebidos. Isso parece um erro. Mínimo esperado: 100. Operação cancelada.` 
+        return res.status(400).json({
+            success: false,
+            error: `Apenas ${records.length} registros recebidos. Isso parece um erro. Mínimo esperado: 100. Operação cancelada.`
         });
+    }
+
+    // Proteção 2: threshold de 70% em relação ao banco atual
+    let pool0 = null;
+    try {
+        pool0 = await sql.connect(sqlConfig);
+        const countRes = await pool0.request().query(`SELECT COUNT(*) AS total FROM COLABORADORES`);
+        const dbCount = countRes.recordset[0].total;
+        await pool0.close(); pool0 = null;
+
+        const threshold = Math.floor(dbCount * 0.70);
+        if (records.length < threshold) {
+            console.log(`⚠️ SYNC: ${records.length} registros vs ${dbCount} no banco (abaixo de 70%) - ABORTANDO`);
+            return res.status(400).json({
+                success: false,
+                error: `A planilha tem ${records.length} colaboradores mas o banco tem ${dbCount}. ` +
+                       `Isso representa menos de 70% do total — a sincronização foi bloqueada para evitar exclusões em massa acidentais. ` +
+                       `Verifique se a planilha está completa (todas as empresas).`
+            });
+        }
+    } catch (e) {
+        if (pool0) try { await pool0.close(); } catch (_) {}
+        console.error('⚠️ Não foi possível verificar threshold:', e.message);
+        // Se não conseguiu verificar, deixa continuar (não bloqueia por erro de conexão)
     }
 
     console.log(`📊 SYNC: Recebidos ${records.length} registros para sincronizar via MERGE`);
