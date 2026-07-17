@@ -585,7 +585,7 @@ app.post('/api/sync-preview', async (req, res) => {
         const req2 = pool.request();
         await req2.query(`
             IF OBJECT_ID('tempdb..##CPF_PREV_${tableId}') IS NOT NULL DROP TABLE ##CPF_PREV_${tableId};
-            CREATE TABLE ##CPF_PREV_${tableId} (CPF VARCHAR(11) PRIMARY KEY);
+            CREATE TABLE ##CPF_PREV_${tableId} (CPF VARCHAR(11) COLLATE SQL_Latin1_General_CP1_CI_AI PRIMARY KEY);
         `);
 
         const batchSize = 500;
